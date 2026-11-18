@@ -1,0 +1,51 @@
+name: Build Android app
+
+on:
+  workflow_dispatch:      # start it by hand with the "Run workflow" button
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      # All the files sit in one folder on GitHub. Android wants them in a certain folder tree, so we arrange them here.
+      - name: Arrange the files
+        run: |
+          mkdir -p app/src/main/java/org/nirobo/browser
+          mkdir -p app/src/main/assets
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+          cp app-build.gradle.kts app/build.gradle.kts
+          cp AndroidManifest.xml app/src/main/AndroidManifest.xml
+          cp MainActivity.kt app/src/main/java/org/nirobo/browser/MainActivity.kt
+          cp blocklist.txt app/src/main/assets/blocklist.txt
+          cp ic_launcher.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+      - name: Build the app
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      # The finished app is attached to a "Release" page, so you can download it straight on your phone.
+      - name: Publish the app file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk nirobo-browser.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest nirobo-browser.apk --prerelease \
+            --title "Nirobo Browser (latest build)" \
+            --notes "Download nirobo-browser.apk below and install it on your Android phone."
