@@ -14,6 +14,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
 
             <intent-filter>
@@ -30,5 +31,16 @@
                 <data android:scheme="https" />
             </intent-filter>
         </activity>
+
+        <!-- the private browser: a separate process, so it has its own storage and is erased when closed -->
+        <activity
+            android:name=".PrivateActivity"
+            android:exported="false"
+            android:process=":private"
+            android:taskAffinity="org.nirobo.browser.private"
+            android:launchMode="singleTask"
+            android:label="Nirobo Private"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>

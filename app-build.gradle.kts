@@ -9,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "org.nirobo.browser"
-        minSdk = 24
+        minSdk = 28
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1-beta"
+        versionCode = 2
+        versionName = "0.2-beta"
     }
 
     buildTypes {
