@@ -8,6 +8,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -60,13 +61,17 @@ internal class Tab(val web: WebView) {
     var progress: Int = 100
     var blocked: Int = 0
     var desktop: Boolean = false
+    var reader: Boolean = false
+    var isAbout: Boolean = false
 }
 
 /**
- * Nirobo Browser: a small, private browser.
+ * Nirobo Browser.
+ *
  * - Nirobo is the home page and the search engine.
- * - Ads and trackers are blocked by a public list of domains.
- * - Tabs, background tabs, and a private mode that runs apart from the normal browser.
+ * - about: pages are built inside the app and work with no internet.
+ * - Ads and trackers are blocked per site, with a switch for each.
+ * - NewsHub is saved to the phone once a day and shown when there is no internet.
  */
 open class BrowserActivity : Activity() {
 
@@ -86,6 +91,9 @@ open class BrowserActivity : Activity() {
     private var current: Tab? = null
     private var mobileUa = ""
 
+    internal lateinit var store: Store
+    private lateinit var bridge: Bridge
+
     private lateinit var root: FrameLayout
     private lateinit var page: LinearLayout
     private lateinit var holder: FrameLayout
@@ -95,6 +103,8 @@ open class BrowserActivity : Activity() {
     private lateinit var tabCount: TextView
     private lateinit var switcher: LinearLayout
     private lateinit var switcherList: LinearLayout
+    private lateinit var findBar: LinearLayout
+    private lateinit var findInput: EditText
 
     private var fullView: View? = null
     private var fullCb: WebChromeClient.CustomViewCallback? = null
@@ -105,19 +115,33 @@ open class BrowserActivity : Activity() {
 
     private fun dp(n: Int): Int = (n * resources.displayMetrics.density).toInt()
 
+    /** True when the app should draw its own pages dark. */
+    internal fun isDark(): Boolean {
+        val t = store.theme
+        if (t == 1) return false
+        if (t == 2) return true
+        val mode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return mode == Configuration.UI_MODE_NIGHT_YES
+    }
+
     // ---------- start ----------
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        store = Store(this)
+        bridge = Bridge(this, store)
         window.statusBarColor = barColor
         if (isPrivate) {
-            // no screenshots, and the page is hidden in the recent apps list
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         }
         mobileUa = WebSettings.getDefaultUserAgent(this).replace("; wv", "")
         buildUi()
         if (isPrivate) wipePrivateData()
         loadBlocklist()
+        if (!isPrivate) {
+            NewsSaver.ensureScheduled(this)
+            NewsSaver.saveIfDue(this) { }
+        }
         val data = intent?.dataString
         newTab(if (isWebAddress(data)) data else homeUrl, false)
     }
@@ -150,7 +174,6 @@ open class BrowserActivity : Activity() {
         page = LinearLayout(this)
         page.orientation = LinearLayout.VERTICAL
 
-        // top bar: address box + shield counter
         val top = LinearLayout(this)
         top.orientation = LinearLayout.HORIZONTAL
         top.gravity = Gravity.CENTER_VERTICAL
@@ -186,10 +209,7 @@ open class BrowserActivity : Activity() {
 
         shield = label("\uD83D\uDEE1 0", 14f, Color.WHITE)
         shield.setPadding(dp(10), dp(4), dp(4), dp(4))
-        shield.setOnClickListener {
-            val n = current?.blocked ?: 0
-            Toast.makeText(this, "Blocked $n ads and trackers on this page", Toast.LENGTH_SHORT).show()
-        }
+        shield.setOnClickListener { showShieldMenu() }
         top.addView(shield, LinearLayout.LayoutParams(wrap, wrap))
 
         bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
@@ -198,7 +218,42 @@ open class BrowserActivity : Activity() {
 
         holder = FrameLayout(this)
 
-        // bottom bar, with symbols
+        // find-in-page bar, hidden until you ask for it
+        findBar = LinearLayout(this)
+        findBar.orientation = LinearLayout.HORIZONTAL
+        findBar.gravity = Gravity.CENTER_VERTICAL
+        findBar.setBackgroundColor(Color.parseColor("#F1F4F2"))
+        findBar.setPadding(dp(10), dp(6), dp(6), dp(6))
+        findBar.visibility = View.GONE
+        findInput = EditText(this)
+        findInput.setSingleLine(true)
+        findInput.hint = "Find in page"
+        findInput.textSize = 14f
+        findInput.setTextColor(Color.BLACK)
+        findInput.setHintTextColor(Color.GRAY)
+        findInput.imeOptions = EditorInfo.IME_ACTION_SEARCH
+        findInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                current?.web?.findAllAsync(s?.toString() ?: "")
+            }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        findInput.setOnEditorActionListener { _, _, _ ->
+            current?.web?.findNext(true)
+            true
+        }
+        findBar.addView(findInput, LinearLayout.LayoutParams(0, wrap, 1f))
+        fun findBtn(t: String, action: () -> Unit) {
+            val v = label(t, 16f, barColor)
+            v.setPadding(dp(12), dp(8), dp(12), dp(8))
+            v.setOnClickListener { action() }
+            findBar.addView(v, LinearLayout.LayoutParams(wrap, wrap))
+        }
+        findBtn("\u25B2") { current?.web?.findNext(false) }
+        findBtn("\u25BC") { current?.web?.findNext(true) }
+        findBtn("\u2715") { closeFind() }
+
         val bottom = LinearLayout(this)
         bottom.orientation = LinearLayout.HORIZONTAL
         bottom.setBackgroundColor(Color.parseColor(if (isPrivate) "#EEEAF6" else "#F1F4F2"))
@@ -213,7 +268,6 @@ open class BrowserActivity : Activity() {
         button("\u2302") { go(homeUrl) }
         button("\u21BB") { current?.web?.reload() }
 
-        // the tabs button: a box with the number of open tabs
         tabCount = label("1", 12f, barColor)
         tabCount.gravity = Gravity.CENTER
         val frame = GradientDrawable()
@@ -230,11 +284,11 @@ open class BrowserActivity : Activity() {
 
         page.addView(top, LinearLayout.LayoutParams(match, wrap))
         page.addView(bar, LinearLayout.LayoutParams(match, dp(3)))
+        page.addView(findBar, LinearLayout.LayoutParams(match, wrap))
         page.addView(holder, LinearLayout.LayoutParams(match, 0, 1f))
         page.addView(bottom, LinearLayout.LayoutParams(match, wrap))
         root.addView(page, FrameLayout.LayoutParams(match, match))
 
-        // the list of open tabs (hidden until you tap the tabs button)
         switcher = LinearLayout(this)
         switcher.orientation = LinearLayout.VERTICAL
         switcher.setBackgroundColor(Color.WHITE)
@@ -289,7 +343,7 @@ open class BrowserActivity : Activity() {
         s.allowFileAccess = false
         s.allowContentAccess = false
         s.mediaPlaybackRequiresUserGesture = true
-        s.javaScriptCanOpenWindowsAutomatically = false   // pop-ups only when you tap something
+        s.javaScriptCanOpenWindowsAutomatically = false
         s.setSupportMultipleWindows(true)
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         s.useWideViewPort = true
@@ -301,12 +355,24 @@ open class BrowserActivity : Activity() {
         s.userAgentString = mobileUa
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, false)
 
+        // dark mode for ordinary web pages
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            s.forceDark = if (isDark()) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
+        }
+
+        // The Bridge is added only while an about: page is showing (see loadInto).
+        // A real website must never be able to reach it, or it could read your
+        // bookmarks and history.
         w.setOnLongClickListener { v -> onLongPress(v as WebView) }
 
         w.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
                 val scheme = u.scheme ?: ""
+                if (scheme == "about") {
+                    loadInto(t, u.toString())
+                    return true
+                }
                 if (scheme == "https") return false
                 if (scheme == "http") {
                     view.loadUrl(u.buildUpon().scheme("https").build().toString())
@@ -320,7 +386,10 @@ open class BrowserActivity : Activity() {
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                if (!request.isForMainFrame && isBlocked(request.url.host)) {
+                if (request.isForMainFrame) return null
+                val host = request.url.host ?: return null
+                if (!store.siteShield(host)) return null
+                if (isBlocked(host)) {
                     t.blocked++
                     if (t === current) runOnUiThread { shield.text = "\uD83D\uDEE1 ${t.blocked}" }
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
@@ -331,6 +400,7 @@ open class BrowserActivity : Activity() {
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 t.blocked = 0
                 t.url = url
+                t.isAbout = AboutPages.isAbout(url)
                 if (t === current) {
                     shield.text = "\uD83D\uDEE1 0"
                     if (!addr.hasFocus()) addr.setText(url)
@@ -345,14 +415,31 @@ open class BrowserActivity : Activity() {
                 if (t.desktop) view.evaluateJavascript(desktopViewportJs, null)
                 t.progress = 100
                 if (t === current) bar.visibility = View.GONE
+                if (!t.isAbout) {
+                    if (store.cookieBlock) view.evaluateJavascript(COOKIE_JS, null)
+                    if (t.reader) applyReader(t)
+                    if (!isPrivate) store.addHistory(url, t.title)
+                }
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
                     val why = TextUtils.htmlEncode(error.description.toString())
-                    val html = "<html><body style='font-family:sans-serif;padding:24px;color:#0E3B2C'>" +
-                        "<h2>Can't open this page</h2><p>$why</p>" +
-                        "<p>Check your internet. Nirobo Browser opens only secure (https) pages.</p>" +
+                    val saved = File(filesDir, "news_saved.json")
+                    val hasNews = saved.exists() && saved.length() > 1000
+                    val newsLink = if (hasNews)
+                        "<p style='margin-top:22px'><a href='about:news' " +
+                            "style='display:inline-block;background:#0B5D3B;color:#fff;" +
+                            "padding:12px 20px;border-radius:11px;text-decoration:none;" +
+                            "font-weight:600'>Read the saved news</a></p>" else ""
+                    val html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>" +
+                        "</head><body style='font-family:sans-serif;padding:24px;color:#0E3B2C;" +
+                        "background:#F6FAF7;line-height:1.6'>" +
+                        "<h2 style='margin:0 0 8px'>Can't open this page</h2>" +
+                        "<p style='color:#5C7A6C'>$why</p>" +
+                        "<p style='color:#5C7A6C'>Check your internet connection. " +
+                        "Nirobo Browser opens only secure (https) pages.</p>" +
+                        newsLink +
                         "</body></html>"
                     view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
                 }
@@ -372,7 +459,6 @@ open class BrowserActivity : Activity() {
                 t.title = title ?: ""
             }
 
-            // a link that wants a new window: it opens as a new tab, but only if you tapped it (no pop-up ads)
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
                 if (!isUserGesture) return false
                 val nt = newTab(null, false)
@@ -404,7 +490,6 @@ open class BrowserActivity : Activity() {
                 exitFullscreen()
             }
 
-            // websites may not use the camera, the microphone or the location
             override fun onPermissionRequest(request: PermissionRequest) {
                 request.deny()
             }
@@ -432,6 +517,7 @@ open class BrowserActivity : Activity() {
 
         w.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
             try {
+                val name = URLUtil.guessFileName(url, contentDisposition, mimetype)
                 if (Build.VERSION.SDK_INT < 29) {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 } else {
@@ -441,12 +527,10 @@ open class BrowserActivity : Activity() {
                     val cookie = CookieManager.getInstance().getCookie(url)
                     if (cookie != null) req.addRequestHeader("Cookie", cookie)
                     req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    req.setDestinationInExternalPublicDir(
-                        Environment.DIRECTORY_DOWNLOADS,
-                        URLUtil.guessFileName(url, contentDisposition, mimetype)
-                    )
-                    (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-                    Toast.makeText(this@BrowserActivity, "Downloading...", Toast.LENGTH_SHORT).show()
+                    req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
+                    val id = (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+                    if (!isPrivate) store.addDownload(id, name, url)
+                    Toast.makeText(this@BrowserActivity, "Downloading $name", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 Toast.makeText(this@BrowserActivity, "Can't download this file", Toast.LENGTH_SHORT).show()
@@ -460,10 +544,33 @@ open class BrowserActivity : Activity() {
         tabs.add(t)
         if (!background) switchTo(t)
         updateTabCount()
-        val u = if (input == null) null else toUrl(input)
-        if (u != null) t.web.loadUrl(u)
+        if (input != null) loadInto(t, input)
         if (background) Toast.makeText(this, "Opened in a background tab", Toast.LENGTH_SHORT).show()
         return t
+    }
+
+    /** Loads either a real address or one of the internal about: pages. */
+    internal fun loadInto(t: Tab, input: String) {
+        if (AboutPages.isAbout(input)) {
+            t.isAbout = true
+            t.url = input
+            t.title = "about:" + AboutPages.name(input)
+            // The bridge exists only for internal pages, and is removed again
+            // before any real website is loaded.
+            t.web.removeJavascriptInterface("Bridge")
+            t.web.addJavascriptInterface(bridge, "Bridge")
+            val html = AboutPages.build(input, isDark())
+            t.web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            if (t === current) {
+                addr.setText(input)
+                shield.text = "\uD83D\uDEE1 0"
+            }
+            return
+        }
+        val u = toUrl(input) ?: return
+        t.isAbout = false
+        t.web.removeJavascriptInterface("Bridge")
+        t.web.loadUrl(u)
     }
 
     private fun switchTo(t: Tab) {
@@ -569,6 +676,101 @@ open class BrowserActivity : Activity() {
         }
     }
 
+    // ---------- find in page ----------
+
+    private fun openFind() {
+        findBar.visibility = View.VISIBLE
+        findInput.requestFocus()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.showSoftInput(findInput, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun closeFind() {
+        findBar.visibility = View.GONE
+        findInput.setText("")
+        current?.web?.clearMatches()
+        hideKeyboard()
+    }
+
+    // ---------- reader mode ----------
+
+    private fun applyReader(t: Tab) {
+        val size = store.readerSize
+        val js = """
+        (function(){
+          if(document.getElementById('__nirobo_reader'))return;
+          var best=null,bestLen=0;
+          var cands=document.querySelectorAll('article,main,[role=main],.post,.entry-content,.article-body,#content,.content');
+          for(var i=0;i<cands.length;i++){
+            var n=cands[i].innerText?cands[i].innerText.length:0;
+            if(n>bestLen){bestLen=n;best=cands[i]}
+          }
+          if(!best||bestLen<400){
+            var ps=document.querySelectorAll('p');var sum=0;
+            for(var j=0;j<ps.length;j++)sum+=ps[j].innerText.length;
+            if(sum<400)return;
+            best=document.body;
+          }
+          var title=document.title||'';
+          var h1=document.querySelector('h1');
+          if(h1&&h1.innerText)title=h1.innerText;
+          var html=best.innerHTML;
+          var dark=${if (isDark()) "true" else "false"};
+          var bg=dark?'#0B1512':'#FBFCFB', ink=dark?'#E8F1EC':'#16241E',
+              dim=dark?'#8FA79C':'#5C7A6C', line=dark?'#1E3A32':'#E2EAE5';
+          var wrap=document.createElement('div');
+          wrap.id='__nirobo_reader';
+          wrap.style.cssText='position:fixed;inset:0;z-index:2147483647;overflow:auto;'+
+            'background:'+bg+';color:'+ink+';padding:22px 18px 60px;'+
+            'font-family:Georgia,serif;font-size:${size}px;line-height:1.75';
+          wrap.innerHTML='<div style="max-width:680px;margin:0 auto">'+
+            '<div style="font-family:-apple-system,Roboto,sans-serif;font-size:11px;'+
+            'letter-spacing:1.2px;text-transform:uppercase;color:'+dim+';margin-bottom:10px">'+
+            'Reader mode</div>'+
+            '<h1 style="font-size:1.55em;line-height:1.25;margin:0 0 18px;color:'+ink+'">'+
+            title.replace(/[<>&]/g,'')+'</h1>'+
+            '<div id="__nirobo_body">'+html+'</div>'+
+            '<div style="margin-top:34px;padding-top:18px;border-top:1px solid '+line+'">'+
+            '<button id="__nirobo_exit" style="font-family:-apple-system,Roboto,sans-serif;'+
+            'font-size:14px;font-weight:600;border:0;border-radius:10px;padding:11px 18px;'+
+            'background:#0B5D3B;color:#fff">Exit reader</button></div></div>';
+          document.body.appendChild(wrap);
+          var b=document.getElementById('__nirobo_body');
+          b.querySelectorAll('script,style,nav,aside,form,iframe,button').forEach(function(e){e.remove()});
+          b.querySelectorAll('img').forEach(function(im){
+            im.style.cssText='max-width:100%;height:auto;border-radius:10px;margin:14px 0';
+          });
+          b.querySelectorAll('a').forEach(function(a){
+            a.style.color='#0B5D3B';a.style.textDecoration='underline';
+          });
+          b.querySelectorAll('p').forEach(function(p){p.style.margin='0 0 1.1em'});
+          document.getElementById('__nirobo_exit').onclick=function(){
+            var w=document.getElementById('__nirobo_reader');
+            if(w)w.remove();
+          };
+        })();
+        """
+        t.web.evaluateJavascript(js, null)
+    }
+
+    private fun toggleReader() {
+        val t = current ?: return
+        if (t.isAbout) {
+            Toast.makeText(this, "Reader mode works on web pages", Toast.LENGTH_SHORT).show()
+            return
+        }
+        t.reader = !t.reader
+        if (t.reader) {
+            applyReader(t)
+            Toast.makeText(this, "Reader mode on", Toast.LENGTH_SHORT).show()
+        } else {
+            t.web.evaluateJavascript(
+                "(function(){var w=document.getElementById('__nirobo_reader');if(w)w.remove()})();", null
+            )
+            Toast.makeText(this, "Reader mode off", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // ---------- links (long press) ----------
 
     private fun onLongPress(w: WebView): Boolean {
@@ -620,7 +822,6 @@ open class BrowserActivity : Activity() {
             .show()
     }
 
-    // The private browser is a separate window with its own storage. It is erased when you close it.
     private fun openPrivate(url: String?) {
         val i = Intent(this, PrivateActivity::class.java)
         if (url != null) i.data = Uri.parse(url)
@@ -645,17 +846,34 @@ open class BrowserActivity : Activity() {
     private fun toUrl(input: String): String? {
         val t = input.trim()
         if (t.isEmpty()) return null
+        if (AboutPages.isAbout(t)) return t
         return when {
             t.startsWith("https://") -> t
             t.startsWith("http://") -> "https://" + t.substring(7)
-            t.contains(" ") || !t.contains(".") -> searchUrl + URLEncoder.encode(t, "UTF-8")
+            t.contains(" ") || !t.contains(".") -> store.searchUrl + URLEncoder.encode(t, "UTF-8")
             else -> "https://$t"
         }
     }
 
     private fun go(input: String) {
-        val u = toUrl(input) ?: return
-        current?.web?.loadUrl(u)
+        val t = current ?: return
+        loadInto(t, input)
+    }
+
+    /** Called from an about: page when the user taps a link. */
+    internal fun openFromPage(url: String) {
+        if (url.isEmpty()) return
+        val t = current ?: return
+        loadInto(t, url)
+    }
+
+    /** Runs JavaScript in the page the user is looking at. */
+    internal fun evalInCurrent(js: String) {
+        current?.web?.evaluateJavascript(js, null)
+    }
+
+    internal fun saveNewsNow(done: (Boolean) -> Unit) {
+        NewsSaver.save(this) { ok -> done(ok) }
     }
 
     private fun hideKeyboard() {
@@ -664,19 +882,66 @@ open class BrowserActivity : Activity() {
         current?.web?.requestFocus()
     }
 
+    // ---------- the shield button ----------
+
+    private fun showShieldMenu() {
+        val t = current ?: return
+        val host = try {
+            Uri.parse(t.url).host ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        if (host.isEmpty()) {
+            Toast.makeText(this, "Blocked ${t.blocked} ads and trackers on this page", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val on = store.siteShield(host)
+        val items = arrayOf(
+            if (on) "Turn blocking off for $host" else "Turn blocking on for $host",
+            if (store.cookieBlock) "Stop blocking cookie pop-ups" else "Block cookie pop-ups",
+            "Ad shield settings",
+            "Blocked on this page: ${t.blocked}"
+        )
+        AlertDialog.Builder(this)
+            .setTitle(host)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> {
+                        store.setSiteShield(host, !on)
+                        Toast.makeText(this, if (!on) "Blocking on for $host" else "Blocking off for $host", Toast.LENGTH_SHORT).show()
+                        t.web.reload()
+                    }
+                    1 -> {
+                        store.cookieBlock = !store.cookieBlock
+                        Toast.makeText(this, if (store.cookieBlock) "Cookie pop-ups blocked" else "Cookie pop-ups allowed", Toast.LENGTH_SHORT).show()
+                        t.web.reload()
+                    }
+                    2 -> loadInto(t, "about:shield")
+                }
+            }
+            .show()
+    }
+
     // ---------- menu ----------
 
     private fun showMenu() {
+        val t = current
         val nNew = "\uFF0B New tab"
         val nPriv = "\uD83D\uDD76 New private tab"
+        val nFind = "\uD83D\uDD0D Find in page"
+        val nReader = if (t?.reader == true) "Exit reader mode" else "\uD83D\uDCD6 Reader mode"
+        val nStar = if (t != null && store.isBookmarked(t.url)) "\u2605 Remove bookmark" else "\u2606 Add bookmark"
         val nShare = "Share page"
         val nOpen = "Open in another app"
-        val nDesk = if (current?.desktop == true) "Use mobile site" else "Use desktop site"
+        val nDesk = if (t?.desktop == true) "Use mobile site" else "Use desktop site"
         val nClear = if (isPrivate) "Close all private tabs" else "Clear browsing data"
         val nAbout = "About Nirobo Browser"
         val items = ArrayList<String>()
         items.add(nNew)
         if (!isPrivate) items.add(nPriv)
+        items.add(nFind)
+        items.add(nReader)
+        items.add(nStar)
         items.add(nShare)
         items.add(nOpen)
         items.add(nDesk)
@@ -686,6 +951,18 @@ open class BrowserActivity : Activity() {
             when (items[which]) {
                 nNew -> newTab(homeUrl, false)
                 nPriv -> openPrivate(null)
+                nFind -> openFind()
+                nReader -> toggleReader()
+                nStar -> {
+                    val tab = current ?: return@setItems
+                    if (store.isBookmarked(tab.url)) {
+                        store.removeBookmark(tab.url)
+                        Toast.makeText(this, "Bookmark removed", Toast.LENGTH_SHORT).show()
+                    } else {
+                        store.addBookmark(tab.url, tab.title)
+                        Toast.makeText(this, "Bookmarked", Toast.LENGTH_SHORT).show()
+                    }
+                }
                 nShare -> {
                     val send = Intent(Intent.ACTION_SEND)
                     send.type = "text/plain"
@@ -707,29 +984,15 @@ open class BrowserActivity : Activity() {
                         CookieManager.getInstance().removeAllCookies(null)
                         CookieManager.getInstance().flush()
                         WebStorage.getInstance().deleteAllData()
+                        store.clearHistory()
                         Toast.makeText(this, "Cleared", Toast.LENGTH_SHORT).show()
                     }
                 }
-                nAbout -> {
-                    AlertDialog.Builder(this)
-                        .setTitle("Nirobo Browser 0.2 (beta)")
-                        .setMessage(
-                            "A small private browser.\n\n" +
-                                "- Nirobo is the home page and search.\n" +
-                                "- Ads and trackers are blocked using public lists (" + hosts.size + " sites in the list now).\n" +
-                                "- Press and hold a link to open it in a new, background or private tab.\n" +
-                                "- Private tabs run in a separate window and are erased when you close them.\n" +
-                                "- Only secure (https) pages open. Websites can't use your camera, microphone or location.\n\n" +
-                                "Built on Android System WebView, so keep it updated in Play Store."
-                        )
-                        .setPositiveButton("OK", null)
-                        .show()
-                }
+                nAbout -> loadInto(current ?: return@setItems, "about:version")
             }
         }.show()
     }
 
-    // Desktop mode: a desktop browser name, and a wide page (1024) instead of the phone width.
     private fun toggleDesktop() {
         val t = current ?: return
         t.desktop = !t.desktop
@@ -758,7 +1021,6 @@ open class BrowserActivity : Activity() {
         if (h.contains('.') && !h.contains('/') && !h.contains(':') && h != "localhost") hosts.add(h)
     }
 
-    // First the short list that comes inside the app, then a bigger public list that is downloaded once a week.
     private fun loadBlocklist() {
         val mayDownload = !isPrivate
         Thread {
@@ -811,6 +1073,7 @@ open class BrowserActivity : Activity() {
         val t = current
         when {
             fullView != null -> exitFullscreen()
+            findBar.visibility == View.VISIBLE -> closeFind()
             switcher.visibility == View.VISIBLE -> hideSwitcher()
             t != null && t.web.canGoBack() -> t.web.goBack()
             t != null && tabs.size > 1 -> closeTab(t)
@@ -835,6 +1098,7 @@ open class BrowserActivity : Activity() {
     override fun onResume() {
         super.onResume()
         current?.web?.onResume()
+        if (!isPrivate) NewsSaver.saveIfDue(this) { }
     }
 
     override fun onDestroy() {
@@ -846,6 +1110,47 @@ open class BrowserActivity : Activity() {
         if (isPrivate) wipePrivateData()
         super.onDestroy()
     }
+
+    companion object {
+        /**
+         * Hides cookie-consent banners and answers the common ones.
+         * Runs on every page when "Block cookie pop-ups" is on.
+         */
+        private const val COOKIE_JS = """
+        (function(){
+          if(window.__nirobo_cookie)return; window.__nirobo_cookie=1;
+          var sel=[
+            '#onetrust-banner-sdk','#onetrust-consent-sdk','.onetrust-pc-dark-filter',
+            '#CybotCookiebotDialog','#CybotCookiebotDialogBodyUnderlay',
+            '.cc-window','.cookie-consent','.cookie-banner','.cookie-notice',
+            '#cookie-banner','#cookie-notice','#cookieConsent','#cookie-law-info-bar',
+            '.qc-cmp2-container','#qc-cmp2-container','.fc-consent-root',
+            '#gdpr-banner','.gdpr-banner','.cmp-container',
+            '[id^="sp_message_container"]','.truste_box_overlay','#truste-consent-track',
+            '.osano-cm-window','#didomi-host','.didomi-popup-container'
+          ];
+          function kill(){
+            for(var i=0;i<sel.length;i++){
+              var els=document.querySelectorAll(sel[i]);
+              for(var j=0;j<els.length;j++){
+                var e=els[j];
+                if(e&&e.style){e.style.setProperty('display','none','important');
+                  e.style.setProperty('visibility','hidden','important')}
+              }
+            }
+            if(document.body){
+              document.body.style.setProperty('overflow','auto','important');
+              document.documentElement.style.setProperty('overflow','auto','important');
+            }
+          }
+          kill();
+          var n=0,iv=setInterval(function(){kill();if(++n>20)clearInterval(iv)},400);
+          var mo=new MutationObserver(kill);
+          try{mo.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}
+          setTimeout(function(){try{mo.disconnect()}catch(e){}},12000);
+        })();
+        """
+    }
 }
 
 /** The normal browser. */
@@ -856,7 +1161,6 @@ class PrivateActivity : BrowserActivity() {
     override val isPrivate: Boolean get() = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // must happen before the first page is created: private pages get their own storage folder
         try {
             WebView.setDataDirectorySuffix("private")
         } catch (e: Exception) {
