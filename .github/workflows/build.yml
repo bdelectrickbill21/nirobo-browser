@@ -24,7 +24,8 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      # All the files sit in one folder on GitHub. Android wants them in a certain folder tree, so we arrange them here.
+      # All the files sit in one folder on GitHub. Android wants them in a certain
+      # folder tree, so we arrange them here.
       - name: Arrange the files
         run: |
           mkdir -p app/src/main/java/org/nirobo/browser
@@ -33,13 +34,18 @@ jobs:
           cp app-build.gradle.kts app/build.gradle.kts
           cp AndroidManifest.xml app/src/main/AndroidManifest.xml
           cp MainActivity.kt app/src/main/java/org/nirobo/browser/MainActivity.kt
+          cp AboutPages.kt app/src/main/java/org/nirobo/browser/AboutPages.kt
+          cp Store.kt app/src/main/java/org/nirobo/browser/Store.kt
+          cp NewsSaver.kt app/src/main/java/org/nirobo/browser/NewsSaver.kt
+          cp BootReceiver.kt app/src/main/java/org/nirobo/browser/BootReceiver.kt
           cp blocklist.txt app/src/main/assets/blocklist.txt
           cp ic_launcher.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 
       - name: Build the app
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      # The finished app is attached to a "Release" page, so you can download it straight on your phone.
+      # The finished app is attached to a "Release" page, so you can download it
+      # straight on your phone.
       - name: Publish the app file
         env:
           GH_TOKEN: ${{ github.token }}
