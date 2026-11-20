@@ -25,7 +25,8 @@ jobs:
           gradle-version: "8.9"
 
       # All the files sit in one folder on GitHub. Android wants them in a certain
-      # folder tree, so we arrange them here.
+      # folder tree, so we arrange them here. Every .kt file is picked up by itself,
+      # so a new Kotlin file never needs a change here.
       - name: Arrange the files
         run: |
           mkdir -p app/src/main/java/org/nirobo/browser
@@ -33,25 +34,49 @@ jobs:
           mkdir -p app/src/main/res/mipmap-xxxhdpi
           cp app-build.gradle.kts app/build.gradle.kts
           cp AndroidManifest.xml app/src/main/AndroidManifest.xml
-          cp MainActivity.kt app/src/main/java/org/nirobo/browser/MainActivity.kt
-          cp AboutPages.kt app/src/main/java/org/nirobo/browser/AboutPages.kt
-          cp Store.kt app/src/main/java/org/nirobo/browser/Store.kt
-          cp NewsSaver.kt app/src/main/java/org/nirobo/browser/NewsSaver.kt
-          cp BootReceiver.kt app/src/main/java/org/nirobo/browser/BootReceiver.kt
+          cp *.kt app/src/main/java/org/nirobo/browser/
           cp blocklist.txt app/src/main/assets/blocklist.txt
           cp ic_launcher.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          # the app learns where to look for updates: this very repo
+          echo "${{ github.repository }}" > app/src/main/assets/update_repo.txt
+
+      # The signing key lives in two GitHub secrets (see SIGNING_SETUP.txt).
+      - name: Get the signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.NIROBO_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/nirobo.keystore"
+            echo "NIROBO_KEYSTORE=$RUNNER_TEMP/nirobo.keystore" >> "$GITHUB_ENV"
+            echo "Signing with your own key."
+          else
+            echo "::warning::No signing key found. The app will build, but an update will not install over an older build. See SIGNING_SETUP.txt."
+          fi
 
       - name: Build the app
-        run: gradle assembleDebug --no-daemon --stacktrace
+        env:
+          NIROBO_STORE_PASS: ${{ secrets.NIROBO_KEY_PASSWORD }}
+          NIROBO_KEY_PASS: ${{ secrets.NIROBO_KEY_PASSWORD }}
+          NIROBO_KEY_ALIAS: nirobo
+        run: |
+          gradle assembleRelease --no-daemon --stacktrace \
+            -PappVersionCode=$((100 + GITHUB_RUN_NUMBER)) \
+            -PappVersionName=1.0.${GITHUB_RUN_NUMBER}
 
-      # The finished app is attached to a "Release" page, so you can download it
-      # straight on your phone.
-      - name: Publish the app file
+      # The finished app goes on a "Release" page, together with version.json.
+      # The app reads version.json to find out if a newer build exists.
+      - name: Publish the app file and the update note
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk nirobo-browser.apk
+          cp app/build/outputs/apk/release/app-release.apk nirobo-browser.apk
+          SHA=$(sha256sum nirobo-browser.apk | cut -d' ' -f1)
+          SIZE=$(stat -c%s nirobo-browser.apk)
+          CODE=$((100 + GITHUB_RUN_NUMBER))
+          printf '{"versionCode":%s,"versionName":"1.0.%s","apk":"https://github.com/%s/releases/download/latest/nirobo-browser.apk","sha256":"%s","size":%s,"notes":"Build %s"}\n' \
+            "$CODE" "$GITHUB_RUN_NUMBER" "$GITHUB_REPOSITORY" "$SHA" "$SIZE" "$GITHUB_RUN_NUMBER" > version.json
+          cat version.json
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest nirobo-browser.apk --prerelease \
+          gh release create latest nirobo-browser.apk version.json --prerelease \
             --title "Nirobo Browser (latest build)" \
-            --notes "Download nirobo-browser.apk below and install it on your Android phone."
+            --notes "Download nirobo-browser.apk below and install it on your Android phone. The app updates itself from here."
