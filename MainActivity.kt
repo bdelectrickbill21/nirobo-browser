@@ -63,6 +63,7 @@ internal class Tab(val web: WebView) {
     var desktop: Boolean = false
     var reader: Boolean = false
     var isAbout: Boolean = false
+    @Volatile var host: String = ""
 }
 
 /**
@@ -76,6 +77,9 @@ internal class Tab(val web: WebView) {
 open class BrowserActivity : Activity() {
 
     protected open val isPrivate: Boolean get() = false
+
+    /** The sandbox is a private window that is locked down much further (see SandboxActivity). */
+    protected open val isSandbox: Boolean get() = false
 
     private val homeUrl = "https://nirobo.pages.dev/"
     private val searchUrl = "https://nirobo.pages.dev/?q="
@@ -105,13 +109,21 @@ open class BrowserActivity : Activity() {
     private lateinit var switcherList: LinearLayout
     private lateinit var findBar: LinearLayout
     private lateinit var findInput: EditText
+    private lateinit var reloadBtn: TextView
+    private lateinit var lockBtn: TextView
+
+    // sandbox only: scripts are off until you turn them on (never saved)
+    private var scriptsOn = false
+
+    /** Where a new tab starts. */
+    private val startUrl: String get() = if (isSandbox) "about:sandbox" else homeUrl
 
     private var fullView: View? = null
     private var fullCb: WebChromeClient.CustomViewCallback? = null
     private var fileCb: ValueCallback<Array<Uri>>? = null
 
     private val barColor: Int
-        get() = Color.parseColor(if (isPrivate) "#2A1F4B" else "#0E3B2C")
+        get() = Color.parseColor(if (isSandbox) "#6B1414" else if (isPrivate) "#2A1F4B" else "#0E3B2C")
 
     private fun dp(n: Int): Int = (n * resources.displayMetrics.density).toInt()
 
@@ -131,9 +143,8 @@ open class BrowserActivity : Activity() {
         store = Store(this)
         bridge = Bridge(this, store)
         window.statusBarColor = barColor
-        if (isPrivate) {
-            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
-        }
+        applySecure()
+        if (isSandbox) CookieManager.getInstance().setAcceptCookie(false)
         mobileUa = WebSettings.getDefaultUserAgent(this).replace("; wv", "")
         buildUi()
         if (isPrivate) wipePrivateData()
@@ -143,7 +154,7 @@ open class BrowserActivity : Activity() {
             NewsSaver.saveIfDue(this) { }
         }
         val data = intent?.dataString
-        newTab(if (isWebAddress(data)) data else homeUrl, false)
+        newTab(if (isWebAddress(data)) data else startUrl, false)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -182,7 +193,7 @@ open class BrowserActivity : Activity() {
 
         addr = EditText(this)
         addr.setSingleLine(true)
-        addr.hint = if (isPrivate) "Private: search or type address" else "Search or type address"
+        addr.hint = if (isSandbox) "Sandbox: type an address" else if (isPrivate) "Private: search or type address" else "Search or type address"
         addr.textSize = 15f
         addr.setTextColor(Color.BLACK)
         addr.setHintTextColor(Color.GRAY)
@@ -205,7 +216,16 @@ open class BrowserActivity : Activity() {
         addr.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) addr.post { addr.selectAll() }
         }
+        // like Chrome: a lock (or info) button on the left, reload or stop on the right
+        lockBtn = label("\u24D8", 18f, Color.WHITE)
+        lockBtn.setPadding(dp(4), dp(4), dp(10), dp(4))
+        lockBtn.setOnClickListener { showSiteInfo() }
+        top.addView(lockBtn, LinearLayout.LayoutParams(wrap, wrap))
         top.addView(addr, LinearLayout.LayoutParams(0, wrap, 1f))
+        reloadBtn = label("\u21BB", 20f, Color.WHITE)
+        reloadBtn.setPadding(dp(10), dp(4), dp(4), dp(4))
+        reloadBtn.setOnClickListener { reloadOrStop() }
+        top.addView(reloadBtn, LinearLayout.LayoutParams(wrap, wrap))
 
         shield = label("\uD83D\uDEE1 0", 14f, Color.WHITE)
         shield.setPadding(dp(10), dp(4), dp(4), dp(4))
@@ -265,8 +285,8 @@ open class BrowserActivity : Activity() {
         }
         button("\u25C0") { current?.web?.let { if (it.canGoBack()) it.goBack() } }
         button("\u25B6") { current?.web?.let { if (it.canGoForward()) it.goForward() } }
-        button("\u2302") { go(homeUrl) }
-        button("\u21BB") { current?.web?.reload() }
+        button("\uFF0B") { newTab(startUrl, false) }
+        button("\u2302") { go(startUrl) }
 
         tabCount = label("1", 12f, barColor)
         tabCount.gravity = Gravity.CENTER
@@ -300,7 +320,7 @@ open class BrowserActivity : Activity() {
         head.gravity = Gravity.CENTER_VERTICAL
         head.setBackgroundColor(barColor)
         head.setPadding(dp(14), dp(8), dp(6), dp(8))
-        val headTitle = label(if (isPrivate) "Private tabs" else "Tabs", 18f, Color.WHITE)
+        val headTitle = label(if (isSandbox) "Sandbox tabs" else if (isPrivate) "Private tabs" else "Tabs", 18f, Color.WHITE)
         head.addView(headTitle, LinearLayout.LayoutParams(0, wrap, 1f))
         fun headButton(text: String, action: () -> Unit) {
             val t = label(text, 15f, Color.WHITE)
@@ -309,7 +329,7 @@ open class BrowserActivity : Activity() {
             head.addView(t, LinearLayout.LayoutParams(wrap, wrap))
         }
         headButton("\uFF0B New") {
-            newTab(homeUrl, false)
+            newTab(startUrl, false)
             hideSwitcher()
         }
         if (!isPrivate) {
@@ -338,13 +358,13 @@ open class BrowserActivity : Activity() {
         val w = WebView(this)
         val t = Tab(w)
         val s = w.settings
-        s.javaScriptEnabled = true
-        s.domStorageEnabled = true
+        s.javaScriptEnabled = !isSandbox || scriptsOn
+        s.domStorageEnabled = !isSandbox
         s.allowFileAccess = false
         s.allowContentAccess = false
         s.mediaPlaybackRequiresUserGesture = true
         s.javaScriptCanOpenWindowsAutomatically = false
-        s.setSupportMultipleWindows(true)
+        s.setSupportMultipleWindows(!isSandbox)
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         s.useWideViewPort = true
         s.builtInZoomControls = true
@@ -373,9 +393,18 @@ open class BrowserActivity : Activity() {
                     loadInto(t, u.toString())
                     return true
                 }
-                if (scheme == "https") return false
-                if (scheme == "http") {
+                if (scheme == "https" || scheme == "http") {
+                    // leaving one of our own pages: take the Bridge away before the website loads
+                    if (t.isAbout) {
+                        t.isAbout = false
+                        view.removeJavascriptInterface("Bridge")
+                    }
+                    if (scheme == "https") return false
                     view.loadUrl(u.buildUpon().scheme("https").build().toString())
+                    return true
+                }
+                if (isSandbox) {
+                    toast("Blocked in the sandbox")
                     return true
                 }
                 try {
@@ -388,6 +417,12 @@ open class BrowserActivity : Activity() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 if (request.isForMainFrame) return null
                 val host = request.url.host ?: return null
+                // sandbox: a page may only load files from its own site
+                if (isSandbox && !sameSite(host, t.host)) {
+                    t.blocked++
+                    if (t === current) runOnUiThread { shield.text = "\uD83D\uDEE1 ${t.blocked}" }
+                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                }
                 if (!store.siteShield(host)) return null
                 if (isBlocked(host)) {
                     t.blocked++
@@ -399,11 +434,16 @@ open class BrowserActivity : Activity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 t.blocked = 0
-                t.url = url
-                t.isAbout = AboutPages.isAbout(url)
+                // our own pages keep the about: name we gave them
+                if (!(t.isAbout && (url.startsWith("data:") || url == "about:blank"))) {
+                    t.url = url
+                    t.isAbout = AboutPages.isAbout(url)
+                    t.host = hostOf(url)
+                }
                 if (t === current) {
                     shield.text = "\uD83D\uDEE1 0"
-                    if (!addr.hasFocus()) addr.setText(url)
+                    if (!addr.hasFocus()) addr.setText(t.url)
+                    updateChrome(t)
                 }
             }
 
@@ -414,7 +454,10 @@ open class BrowserActivity : Activity() {
             override fun onPageFinished(view: WebView, url: String) {
                 if (t.desktop) view.evaluateJavascript(desktopViewportJs, null)
                 t.progress = 100
-                if (t === current) bar.visibility = View.GONE
+                if (t === current) {
+                    bar.visibility = View.GONE
+                    updateChrome(t)
+                }
                 if (!t.isAbout) {
                     if (store.cookieBlock) view.evaluateJavascript(COOKIE_JS, null)
                     if (t.reader) applyReader(t)
@@ -452,6 +495,7 @@ open class BrowserActivity : Activity() {
                 if (t === current) {
                     bar.progress = newProgress
                     bar.visibility = if (newProgress in 1..99) View.VISIBLE else View.GONE
+                    updateChrome(t)
                 }
             }
 
@@ -460,7 +504,7 @@ open class BrowserActivity : Activity() {
             }
 
             override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
-                if (!isUserGesture) return false
+                if (isSandbox || !isUserGesture) return false
                 val nt = newTab(null, false)
                 val transport = resultMsg.obj as WebView.WebViewTransport
                 transport.webView = nt.web
@@ -503,6 +547,10 @@ open class BrowserActivity : Activity() {
                 filePathCallback: ValueCallback<Array<Uri>>,
                 fileChooserParams: FileChooserParams
             ): Boolean {
+                if (isSandbox) {
+                    filePathCallback.onReceiveValue(null)
+                    return true
+                }
                 fileCb?.onReceiveValue(null)
                 fileCb = filePathCallback
                 return try {
@@ -516,6 +564,10 @@ open class BrowserActivity : Activity() {
         }
 
         w.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
+            if (isSandbox) {
+                toast("Downloads are blocked in the sandbox")
+                return@setDownloadListener
+            }
             try {
                 val name = URLUtil.guessFileName(url, contentDisposition, mimetype)
                 if (Build.VERSION.SDK_INT < 29) {
@@ -551,19 +603,40 @@ open class BrowserActivity : Activity() {
 
     /** Loads either a real address or one of the internal about: pages. */
     internal fun loadInto(t: Tab, input: String) {
+        val low = input.trim().lowercase()
+        // hidden command: "about:sandbox" or "sandbox:<address>" opens the sandbox window
+        if (!isSandbox && (low == "about:sandbox" || low.startsWith("sandbox:"))) {
+            val rest = if (low.startsWith("sandbox:")) input.trim().substring(8).trim() else ""
+            openSandbox(if (rest.isEmpty()) null else toUrl(rest))
+            return
+        }
         if (AboutPages.isAbout(input)) {
+            val name = AboutPages.name(input)
+            if (isSandbox && name != "blank" && name != "sandbox") {
+                toast("Internal pages are switched off in the sandbox")
+                return
+            }
+            val shown = "about:" + name
             t.isAbout = true
-            t.url = input
-            t.title = "about:" + AboutPages.name(input)
+            t.url = shown
+            t.host = ""
+            t.title = shown
             // The bridge exists only for internal pages, and is removed again
             // before any real website is loaded.
             t.web.removeJavascriptInterface("Bridge")
-            t.web.addJavascriptInterface(bridge, "Bridge")
-            val html = AboutPages.build(input, isDark())
-            t.web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            val html: String
+            if (isSandbox) {
+                html = if (name == "blank") AboutPages.build("about:blank", isDark()) else sandboxPage()
+            } else {
+                t.web.addJavascriptInterface(bridge, "Bridge")
+                html = AboutPages.build(shown, isDark())
+            }
+            // the page name is also the history address, so back/forward and the address bar keep the right name
+            t.web.loadDataWithBaseURL(shown, html, "text/html", "utf-8", shown)
             if (t === current) {
-                addr.setText(input)
+                addr.setText(shown)
                 shield.text = "\uD83D\uDEE1 0"
+                updateChrome(t)
             }
             return
         }
@@ -580,6 +653,7 @@ open class BrowserActivity : Activity() {
         holder.addView(t.web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         addr.setText(t.url)
         shield.text = "\uD83D\uDEE1 ${t.blocked}"
+        updateChrome(t)
         bar.progress = t.progress
         bar.visibility = if (t.progress in 1..99) View.VISIBLE else View.GONE
         updateTabCount()
@@ -598,7 +672,7 @@ open class BrowserActivity : Activity() {
                 finish()
                 return
             }
-            newTab(homeUrl, false)
+            newTab(startUrl, false)
         } else if (current === t) {
             switchTo(tabs[minOf(i, tabs.size - 1)])
         }
@@ -617,7 +691,7 @@ open class BrowserActivity : Activity() {
             finish()
             return
         }
-        newTab(homeUrl, false)
+        newTab(startUrl, false)
         hideSwitcher()
     }
 
@@ -640,7 +714,11 @@ open class BrowserActivity : Activity() {
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         if (isPrivate) {
-            val note = label("Nothing is saved here. Everything is erased when you close these tabs.", 13f, Color.GRAY)
+            val note = label(
+                if (isSandbox) "Sandbox: scripts, cookies, storage and downloads are blocked. Everything is erased when you close it."
+                else "Nothing is saved here. Everything is erased when you close these tabs.",
+                13f, Color.GRAY
+            )
             note.setPadding(dp(14), dp(10), dp(14), dp(10))
             switcherList.addView(note, LinearLayout.LayoutParams(match, wrap))
         }
@@ -771,6 +849,100 @@ open class BrowserActivity : Activity() {
         }
     }
 
+    // ---------- helpers: buttons, screen lock, sandbox ----------
+
+    private fun toast(s: String) {
+        Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun hostOf(u: String): String = try {
+        Uri.parse(u).host ?: ""
+    } catch (e: Exception) {
+        ""
+    }
+
+    private fun lastTwo(h: String): String {
+        val p = h.lowercase().split('.')
+        return if (p.size <= 2) h.lowercase() else p[p.size - 2] + "." + p[p.size - 1]
+    }
+
+    /** Same site, roughly: the last two parts of the name match. */
+    private fun sameSite(a: String, b: String): Boolean = b.isEmpty() || lastTwo(a) == lastTwo(b)
+
+    /** Block screen mirroring, casting, recording and screenshots. Always on in private and sandbox windows. */
+    internal fun applySecure() {
+        if (isPrivate || store.secureScreen) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    /** Lock or info symbol on the left, reload or stop on the right. */
+    private fun updateChrome(t: Tab) {
+        reloadBtn.text = if (t.progress in 1..99) "\u2715" else "\u21BB"
+        lockBtn.text = if (t.url.startsWith("https://")) "\uD83D\uDD12" else "\u24D8"
+    }
+
+    private fun reloadOrStop() {
+        val t = current ?: return
+        if (t.progress in 1..99) {
+            t.web.stopLoading()
+            t.progress = 100
+            bar.visibility = View.GONE
+            updateChrome(t)
+            return
+        }
+        if (t.isAbout) loadInto(t, t.url) else t.web.reload()
+    }
+
+    private fun showSiteInfo() {
+        val t = current ?: return
+        val message = when {
+            t.isAbout -> "This page is inside Nirobo Browser. It never leaves your phone."
+            t.url.startsWith("https://") -> "The connection is secure (https).\n\nBlocked on this page: ${t.blocked}"
+            else -> t.url
+        }
+        val b = AlertDialog.Builder(this)
+            .setTitle(if (t.host.isEmpty()) "Nirobo Browser" else t.host)
+            .setMessage(message)
+            .setNeutralButton("Copy address") { _, _ ->
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("link", t.url))
+                toast("Address copied")
+            }
+            .setNegativeButton("Close", null)
+        if (!t.isAbout) b.setPositiveButton("Shield options") { _, _ -> showShieldMenu() }
+        b.show()
+    }
+
+    private fun toggleSandboxScripts() {
+        scriptsOn = !scriptsOn
+        for (x in tabs) x.web.settings.javaScriptEnabled = scriptsOn
+        val t = current
+        if (t != null && !t.isAbout) t.web.reload()
+        toast(if (scriptsOn) "Scripts are ON. Be careful." else "Scripts are OFF")
+    }
+
+    private fun sandboxPage(): String {
+        val dark = isDark()
+        val bg = if (dark) "#1A0F0F" else "#FFF6F4"
+        val ink = if (dark) "#F3DCDC" else "#4A1414"
+        return "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
+            "<meta name='viewport' content='width=device-width,initial-scale=1'><title>Sandbox</title></head>" +
+            "<body style='font-family:sans-serif;padding:22px;line-height:1.6;background:" + bg + ";color:" + ink + "'>" +
+            "<h2 style='margin:0 0 6px'>Nirobo Sandbox</h2>" +
+            "<p>A locked room for links you do not trust. Type an address above.</p>" +
+            "<ul style='padding-left:18px'>" +
+            "<li>Scripts are off (turn them on in the menu only if you must).</li>" +
+            "<li>No cookies and no stored data.</li>" +
+            "<li>A page can load files only from its own site.</li>" +
+            "<li>No downloads, no pop-ups, no file uploads, no other apps.</li>" +
+            "<li>Nothing is saved. Closing the sandbox erases it.</li>" +
+            "<li>Screenshots and screen mirroring are blocked.</li>" +
+            "</ul></body></html>"
+    }
+
     // ---------- links (long press) ----------
 
     private fun onLongPress(w: WebView): Boolean {
@@ -793,10 +965,12 @@ open class BrowserActivity : Activity() {
         val inPriv = "Open in private tab"
         val copy = "Copy link"
         val share = "Share link"
+        val inSand = "Open in sandbox"
         val items = ArrayList<String>()
         items.add(inNew)
         items.add(inBack)
         if (!isPrivate) items.add(inPriv)
+        if (!isSandbox) items.add(inSand)
         items.add(copy)
         items.add(share)
         AlertDialog.Builder(this)
@@ -806,6 +980,7 @@ open class BrowserActivity : Activity() {
                     inNew -> newTab(url, false)
                     inBack -> newTab(url, true)
                     inPriv -> openPrivate(url)
+                    inSand -> openSandbox(url)
                     copy -> {
                         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cm.setPrimaryClip(ClipData.newPlainText("link", url))
@@ -824,6 +999,13 @@ open class BrowserActivity : Activity() {
 
     private fun openPrivate(url: String?) {
         val i = Intent(this, PrivateActivity::class.java)
+        if (url != null) i.data = Uri.parse(url)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(i)
+    }
+
+    private fun openSandbox(url: String?) {
+        val i = Intent(this, SandboxActivity::class.java)
         if (url != null) i.data = Uri.parse(url)
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(i)
@@ -925,72 +1107,104 @@ open class BrowserActivity : Activity() {
     // ---------- menu ----------
 
     private fun showMenu() {
-        val t = current
-        val nNew = "\uFF0B New tab"
-        val nPriv = "\uD83D\uDD76 New private tab"
-        val nFind = "\uD83D\uDD0D Find in page"
-        val nReader = if (t?.reader == true) "Exit reader mode" else "\uD83D\uDCD6 Reader mode"
-        val nStar = if (t != null && store.isBookmarked(t.url)) "\u2605 Remove bookmark" else "\u2606 Add bookmark"
-        val nShare = "Share page"
-        val nOpen = "Open in another app"
-        val nDesk = if (t?.desktop == true) "Use mobile site" else "Use desktop site"
-        val nClear = if (isPrivate) "Close all private tabs" else "Clear browsing data"
-        val nAbout = "About Nirobo Browser"
+        val t = current ?: return
         val items = ArrayList<String>()
-        items.add(nNew)
-        if (!isPrivate) items.add(nPriv)
-        items.add(nFind)
-        items.add(nReader)
-        items.add(nStar)
-        items.add(nShare)
-        items.add(nOpen)
-        items.add(nDesk)
-        items.add(nClear)
-        items.add(nAbout)
-        AlertDialog.Builder(this).setItems(items.toTypedArray()) { _, which ->
-            when (items[which]) {
-                nNew -> newTab(homeUrl, false)
-                nPriv -> openPrivate(null)
-                nFind -> openFind()
-                nReader -> toggleReader()
-                nStar -> {
-                    val tab = current ?: return@setItems
-                    if (store.isBookmarked(tab.url)) {
-                        store.removeBookmark(tab.url)
-                        Toast.makeText(this, "Bookmark removed", Toast.LENGTH_SHORT).show()
-                    } else {
-                        store.addBookmark(tab.url, tab.title)
-                        Toast.makeText(this, "Bookmarked", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                nShare -> {
-                    val send = Intent(Intent.ACTION_SEND)
-                    send.type = "text/plain"
-                    send.putExtra(Intent.EXTRA_TEXT, current?.web?.url ?: homeUrl)
-                    startActivity(Intent.createChooser(send, "Share"))
-                }
-                nOpen -> {
-                    val view = Intent(Intent.ACTION_VIEW, Uri.parse(current?.web?.url ?: homeUrl))
-                    startActivity(Intent.createChooser(view, "Open with"))
-                }
-                nDesk -> toggleDesktop()
-                nClear -> {
-                    if (isPrivate) {
-                        closeAll()
-                    } else {
-                        current?.web?.clearCache(true)
-                        current?.web?.clearHistory()
-                        current?.web?.clearFormData()
-                        CookieManager.getInstance().removeAllCookies(null)
-                        CookieManager.getInstance().flush()
-                        WebStorage.getInstance().deleteAllData()
-                        store.clearHistory()
-                        Toast.makeText(this, "Cleared", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                nAbout -> loadInto(current ?: return@setItems, "about:version")
+        val acts = ArrayList<() -> Unit>()
+        fun add(name: String, action: () -> Unit) {
+            items.add(name)
+            acts.add(action)
+        }
+        add("\uFF0B New tab") { newTab(startUrl, false) }
+        if (!isPrivate) add("\uD83D\uDD76 New private tab") { openPrivate(null) }
+        if (!isPrivate) {
+            add("\u2606 Bookmarks") { loadInto(t, "about:bookmarks") }
+            add("\uD83D\uDD52 History") { loadInto(t, "about:history") }
+            add("\u2193 Downloads") { loadInto(t, "about:downloads") }
+        }
+        add("\uD83D\uDD0D Find in page") { openFind() }
+        add(if (t.reader) "Exit reader mode" else "\uD83D\uDCD6 Reader mode") { toggleReader() }
+        add("Share page") {
+            val send = Intent(Intent.ACTION_SEND)
+            send.type = "text/plain"
+            send.putExtra(Intent.EXTRA_TEXT, current?.web?.url ?: homeUrl)
+            startActivity(Intent.createChooser(send, "Share"))
+        }
+        if (!isSandbox) {
+            add("Open in another app") {
+                val view = Intent(Intent.ACTION_VIEW, Uri.parse(current?.web?.url ?: homeUrl))
+                startActivity(Intent.createChooser(view, "Open with"))
             }
-        }.show()
+        }
+        add(if (t.desktop) "Use mobile site" else "Use desktop site") { toggleDesktop() }
+        if (isSandbox) {
+            add(if (scriptsOn) "Sandbox: turn scripts OFF" else "Sandbox: turn scripts ON") { toggleSandboxScripts() }
+        }
+        if (!isPrivate) add("Check for updates") { Updater.check(this, true) }
+        add(
+            if (isSandbox) "Close the sandbox"
+            else if (isPrivate) "Close all private tabs"
+            else "Clear browsing data"
+        ) { clearData() }
+        if (!isSandbox) add("About Nirobo Browser") { loadInto(t, "about:version") }
+
+        // the icon row on top of the menu, like Chrome: forward, bookmark, downloads, info, reload
+        val dlgRef = arrayOfNulls<AlertDialog>(1)
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.setPadding(dp(4), dp(8), dp(4), dp(4))
+        fun icon(symbol: String, action: () -> Unit) {
+            val v = label(symbol, 22f, barColor)
+            v.gravity = Gravity.CENTER
+            v.setPadding(0, dp(10), 0, dp(10))
+            v.setOnClickListener {
+                dlgRef[0]?.dismiss()
+                action()
+            }
+            row.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        icon("\u25B6") { if (t.web.canGoForward()) t.web.goForward() }
+        if (!isPrivate) {
+            icon(if (store.isBookmarked(t.url)) "\u2605" else "\u2606") { toggleBookmark(t) }
+            icon("\u2193") { loadInto(t, "about:downloads") }
+        }
+        icon("\u24D8") { showSiteInfo() }
+        icon("\u21BB") { reloadOrStop() }
+
+        val dlg = AlertDialog.Builder(this)
+            .setCustomTitle(row)
+            .setItems(items.toTypedArray()) { _, which -> acts[which]() }
+            .create()
+        dlgRef[0] = dlg
+        dlg.show()
+    }
+
+    private fun toggleBookmark(t: Tab) {
+        if (t.isAbout || !t.url.startsWith("http")) {
+            toast("This page can't be bookmarked")
+            return
+        }
+        if (store.isBookmarked(t.url)) {
+            store.removeBookmark(t.url)
+            toast("Bookmark removed")
+        } else {
+            store.addBookmark(t.url, t.title)
+            toast("Bookmarked")
+        }
+    }
+
+    private fun clearData() {
+        if (isPrivate) {
+            closeAll()
+            return
+        }
+        current?.web?.clearCache(true)
+        current?.web?.clearHistory()
+        current?.web?.clearFormData()
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
+        WebStorage.getInstance().deleteAllData()
+        store.clearHistory()
+        toast("Cleared")
     }
 
     private fun toggleDesktop() {
@@ -1000,7 +1214,7 @@ open class BrowserActivity : Activity() {
         s.userAgentString = if (t.desktop) desktopUa else mobileUa
         s.useWideViewPort = true
         s.loadWithOverviewMode = t.desktop
-        t.web.reload()
+        if (!t.isAbout) t.web.reload()
     }
 
     // ---------- ad and tracker blocking ----------
@@ -1098,7 +1312,10 @@ open class BrowserActivity : Activity() {
     override fun onResume() {
         super.onResume()
         current?.web?.onResume()
-        if (!isPrivate) NewsSaver.saveIfDue(this) { }
+        if (!isPrivate) {
+            NewsSaver.saveIfDue(this) { }
+            Updater.check(this, false)
+        }
     }
 
     override fun onDestroy() {
@@ -1163,6 +1380,25 @@ class PrivateActivity : BrowserActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         try {
             WebView.setDataDirectorySuffix("private")
+        } catch (e: Exception) {
+        }
+        super.onCreate(savedInstanceState)
+    }
+}
+
+/**
+ * The sandbox: a window for links you do not trust.
+ * It is its own process with its own storage, like the private window, and on top of that:
+ * scripts off, no cookies, no stored data, no downloads, no pop-ups, no file uploads,
+ * no opening other apps, and a page may only load files from its own site.
+ */
+class SandboxActivity : BrowserActivity() {
+    override val isPrivate: Boolean get() = true
+    override val isSandbox: Boolean get() = true
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        try {
+            WebView.setDataDirectorySuffix("sandbox")
         } catch (e: Exception) {
         }
         super.onCreate(savedInstanceState)

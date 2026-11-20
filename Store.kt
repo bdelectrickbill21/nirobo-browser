@@ -47,6 +47,16 @@ internal class Store(ctx: Context) {
         get() = p.getString("home_url", "https://nirobo.pages.dev/") ?: "https://nirobo.pages.dev/"
         set(v) = p.edit().putString("home_url", v).apply()
 
+    /** Block screenshots and screen mirroring (shown as black). */
+    var secureScreen: Boolean
+        get() = p.getBoolean("secure_screen", false)
+        set(v) = p.edit().putBoolean("secure_screen", v).apply()
+
+    /** Look for a new version of the app whenever it opens. */
+    var autoUpdate: Boolean
+        get() = p.getBoolean("auto_update", true)
+        set(v) = p.edit().putBoolean("auto_update", v).apply()
+
     /** Remember the last NewsHub download time (epoch millis). */
     var newsSavedAt: Long
         get() = p.getLong("news_saved_at", 0L)

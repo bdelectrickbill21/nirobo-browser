@@ -26,7 +26,8 @@ internal object AboutPages {
     /** Every page the address bar understands. */
     val NAMES = listOf(
         "blank", "home", "internet", "web", "phone", "bookmarks", "history",
-        "downloads", "settings", "shield", "news", "version", "nirobo"
+        "downloads", "settings", "shield", "news", "version", "nirobo",
+        "update", "charge", "battery", "sandbox"
     )
 
     fun isAbout(url: String): Boolean = url.startsWith("about:")
@@ -528,6 +529,10 @@ internal object AboutPages {
             <span class="v"><div class="sw" id="sw-shield" onclick="tog('shield')"><i></i></div></span></div>
           <div class="row"><span class="k">Block cookie pop-ups</span>
             <span class="v"><div class="sw" id="sw-cookie" onclick="tog('cookie')"><i></i></div></span></div>
+          <div class="row"><span class="k">Block screen mirroring &amp; screenshots</span>
+            <span class="v"><div class="sw" id="sw-secure" onclick="tog('secure')"><i></i></div></span></div>
+          <div class="row"><span class="k">Check for updates when the app opens</span>
+            <span class="v"><div class="sw" id="sw-autoupdate" onclick="tog('autoupdate')"><i></i></div></span></div>
         </div>
 
         <h2>Search</h2>
@@ -571,6 +576,7 @@ internal object AboutPages {
             document.getElementById('theme').value=s.theme;
             document.getElementById('rsize').value=s.readerSize;
             sw('shield',s.shield); sw('cookie',s.cookie);
+            sw('secure',s.secure); sw('autoupdate',s.autoupdate);
             document.getElementById('surl').textContent=s.searchUrl;
             document.getElementById('hurl').textContent=s.homeUrl;
             document.getElementById('ver').textContent=s.version;
@@ -710,11 +716,57 @@ internal object AboutPages {
           <div class="row"><span class="k"><a href="about:shield">about:shield</a></span><span class="v">Ad shield per site</span></div>
           <div class="row"><span class="k"><a href="about:news">about:news</a></span><span class="v">Saved NewsHub</span></div>
           <div class="row"><span class="k"><a href="about:settings">about:settings</a></span><span class="v">Settings</span></div>
+          <div class="row"><span class="k"><a href="about:update">about:update</a></span><span class="v">Check for a new version</span></div>
+          <div class="row"><span class="k">about:charge</span><span class="v">Same as about:phone</span></div>
+          <div class="row"><span class="k">about:sandbox</span><span class="v">Opens the locked sandbox window</span></div>
         </div>
 
         <p class="hint">Type any of these in the address bar. They work with no internet.</p>
         """
         return page("About Nirobo Browser", dark, body)
+    }
+
+    // =====================================================================
+    //  about:update  —  hidden: check for a new version
+    // =====================================================================
+
+    private fun update(dark: Boolean): String {
+        val body = """
+        <h1>Updates</h1>
+        <p class="sub">Nirobo Browser updates itself from its own GitHub releases.</p>
+        <div class="card">
+          <div class="row"><span class="k">Installed</span><span class="v" id="inst">—</span></div>
+          <div class="row"><span class="k">Newest build</span><span class="v" id="latest">—</span></div>
+          <div class="row"><span class="k">Last checked</span><span class="v" id="last">—</span></div>
+          <div class="row"><span class="k">Result</span><span class="v" id="status">—</span></div>
+          <div class="row"><span class="k">Check now</span>
+            <span class="v"><button class="ghost" onclick="check()">Check</button></span></div>
+          <div class="row"><span class="k">Check when the app opens</span>
+            <span class="v"><div class="sw" id="sw-auto" onclick="tog()"><i></i></div></span></div>
+        </div>
+        <p class="hint" id="repo"></p>
+        <p class="hint">When a newer build exists, a box asks if you want it. Tap Update now and Android installs it over this app. Your bookmarks and settings stay.</p>
+        """
+        val script = """
+        function load(){
+          var s; try{s=JSON.parse(Bridge.updateState())}catch(e){return}
+          document.getElementById('inst').textContent=s.installed;
+          document.getElementById('latest').textContent=s.latest||'—';
+          document.getElementById('last').textContent=s.last;
+          document.getElementById('status').textContent=s.status;
+          document.getElementById('repo').textContent='Source: github.com/'+s.repo;
+          var e=document.getElementById('sw-auto');
+          if(s.auto)e.classList.add('on');else e.classList.remove('on');
+        }
+        function check(){
+          document.getElementById('status').textContent='Checking…';
+          Bridge.checkUpdate();
+          setTimeout(load,2500);setTimeout(load,7000);
+        }
+        function tog(){Bridge.toggle('autoupdate');load()}
+        load();
+        """
+        return page("Updates", dark, body, script)
     }
 
     // =====================================================================
@@ -725,7 +777,8 @@ internal object AboutPages {
         "blank" -> blank(dark)
         "internet" -> internet(dark)
         "web" -> web(dark)
-        "phone" -> phone(dark)
+        "phone", "charge", "battery" -> phone(dark)
+        "update" -> update(dark)
         "bookmarks" -> bookmarks(dark)
         "history" -> history(dark)
         "downloads" -> downloads(dark)
@@ -795,6 +848,8 @@ internal class Bridge(
         o.put("homeUrl", store.homeUrl)
         o.put("version", BuildConfig.VERSION_NAME)
         o.put("bookmarks", store.bookmarks().length())
+        o.put("secure", store.secureScreen)
+        o.put("autoupdate", store.autoUpdate)
         o.put("newsSavedAt", if (store.newsSavedAt == 0L) "" else
             android.text.format.DateFormat.format("d MMM, HH:mm", store.newsSavedAt).toString())
         return o.toString()
@@ -813,7 +868,33 @@ internal class Bridge(
         when (key) {
             "shield" -> store.shieldEnabled = !store.shieldEnabled
             "cookie" -> store.cookieBlock = !store.cookieBlock
+            "autoupdate" -> store.autoUpdate = !store.autoUpdate
+            "secure" -> {
+                store.secureScreen = !store.secureScreen
+                act.runOnUiThread { act.applySecure() }
+            }
         }
+    }
+
+    // ---------- updates ----------
+
+    @JavascriptInterface
+    fun updateState(): String {
+        val o = JSONObject()
+        o.put("installed", BuildConfig.VERSION_NAME + " (" + Updater.installedCode(act) + ")")
+        o.put("latest", store.getString("upd_latest", ""))
+        val last = store.getString("upd_last", "0").toLongOrNull() ?: 0L
+        o.put("last", if (last == 0L) "never" else
+            android.text.format.DateFormat.format("d MMM, HH:mm", last).toString())
+        o.put("status", store.getString("upd_status", "Not checked yet"))
+        o.put("auto", store.autoUpdate)
+        o.put("repo", Updater.repo(act))
+        return o.toString()
+    }
+
+    @JavascriptInterface
+    fun checkUpdate() {
+        act.runOnUiThread { Updater.check(act, true) }
     }
 
     @JavascriptInterface

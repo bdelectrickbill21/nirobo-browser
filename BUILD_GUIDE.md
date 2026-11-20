@@ -1,4 +1,4 @@
-# Nirobo Browser 1.0 — build guide
+# Nirobo Browser 1.1 — build guide
 
 This is the upgraded Nirobo Browser: a real Android app (Kotlin + Android System
 WebView), not a website in a frame. It builds to an APK with GitHub Actions, so
@@ -16,6 +16,7 @@ workflow arranges them into the folder tree Android needs.
 | `MainActivity.kt` | The browser: tabs, address bar, menu, find-in-page, reader mode, shield, dark mode |
 | `AboutPages.kt` | Every `about:` page, plus the JavaScript bridge they use |
 | `Store.kt` | Settings, bookmarks, history, downloads, per-site shield switches |
+| `Updater.kt` | Checks the GitHub release for a newer build, downloads it, checks it, and installs it |
 | `NewsSaver.kt` | Downloads NewsHub once a day at UTC midnight and keeps the copy |
 | `BootReceiver.kt` | Puts the daily alarm back after a phone restart |
 | `AndroidManifest.xml` | Permissions and the two activities |
@@ -126,3 +127,33 @@ your GitHub Actions run.
 **The Charge Meter APK was never opened, decompiled or modified.** `about:phone`
 is written from scratch in Kotlin using Android's own `BatteryManager` and
 `Build` APIs.
+
+---
+
+## 8. New in 1.1
+
+**Buttons like Chrome, Firefox and Brave**
+- Top bar: a lock / info button on the left (tap for site info), reload / stop on the right, and the shield with its counter (Brave style).
+- Bottom bar: back, forward, **new tab**, home, tabs, menu.
+- The menu opens with an icon row (forward, bookmark, downloads, info, reload) and lists Bookmarks, History and Downloads like Chrome. The tools (`about:internet`, `about:web`, `about:phone`, `about:update`...) stay hidden: type them in the address bar.
+
+**Sandbox** — press and hold a link and choose **Open in sandbox**, or type `sandbox:example.com`, or type `about:sandbox`. It is a separate red window: scripts off, no cookies, no stored data, a page can load files only from its own site, no downloads, no pop-ups, no uploads, no other apps, screenshots blocked, erased when closed. Menu → "Sandbox: turn scripts ON" if a page needs them.
+
+**Block mirror** — Settings → *Block screen mirroring & screenshots*. Casting and recording show black. Private and sandbox windows always have it on.
+
+**Aliases** — `about:charge` and `about:battery` open `about:phone`.
+
+---
+
+## 9. Automatic updates
+
+How it works: every build on GitHub puts `nirobo-browser.apk` and `version.json` on the **latest** release. When the app opens it reads `version.json`. If the number is higher it asks **Update now?**, downloads the file, checks its fingerprint, and hands it to Android's installer. Your bookmarks and settings stay.
+
+You must do three things, once:
+1. **Make the repo public** (Settings, scroll to the bottom, Change visibility). The app cannot download from a private repo. The app has no secrets in it.
+2. **Add the two signing secrets** (see `SIGNING_SETUP.txt`). Android only accepts an update signed with the same key as the installed app.
+3. **Uninstall the old Nirobo Browser once**, then install the new file. Its old key is different. After this, you never reinstall by hand again.
+
+Menu → **Check for updates**, or type `about:update`, to check by hand. The first update asks Android's "allow installs from this app" once. On newer Android, later updates can install with no question.
+
+What was not checked: this was not compiled or run here. The first compile happens in your GitHub run. If it fails, send me the red error lines.
