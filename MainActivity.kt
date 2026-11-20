@@ -114,6 +114,7 @@ open class BrowserActivity : Activity() {
     private lateinit var findBar: LinearLayout
     private lateinit var findInput: EditText
     private lateinit var topBar: LinearLayout
+    private lateinit var bottomBar: LinearLayout
     private lateinit var reloadBtn: TextView
     private lateinit var lockBtn: TextView
 
@@ -282,6 +283,7 @@ open class BrowserActivity : Activity() {
         findBtn("\u2715") { closeFind() }
 
         val bottom = LinearLayout(this)
+        bottomBar = bottom
         bottom.orientation = LinearLayout.HORIZONTAL
         bottom.setBackgroundColor(Color.parseColor(if (isPrivate) "#EEEAF6" else "#F1F4F2"))
         fun button(symbol: String, action: () -> Unit) {
@@ -1244,7 +1246,7 @@ open class BrowserActivity : Activity() {
         pw.isOutsideTouchable = true
         pw.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         menuPopup = pw
-        val lift = bottom.height + (if (store.barBottom) topBar.height else 0) + dp(6)
+        val lift = bottomBar.height + (if (store.barBottom) topBar.height else 0) + dp(6)
         pw.showAtLocation(root, Gravity.BOTTOM or Gravity.END, dp(8), lift)
     }
 
@@ -1258,13 +1260,13 @@ open class BrowserActivity : Activity() {
             page.addView(holder, LinearLayout.LayoutParams(match, 0, 1f))
             page.addView(findBar, LinearLayout.LayoutParams(match, wrap))
             page.addView(topBar, LinearLayout.LayoutParams(match, wrap))
-            page.addView(bottom, LinearLayout.LayoutParams(match, wrap))
+            page.addView(bottomBar, LinearLayout.LayoutParams(match, wrap))
         } else {
             page.addView(topBar, LinearLayout.LayoutParams(match, wrap))
             page.addView(bar, LinearLayout.LayoutParams(match, dp(3)))
             page.addView(findBar, LinearLayout.LayoutParams(match, wrap))
             page.addView(holder, LinearLayout.LayoutParams(match, 0, 1f))
-            page.addView(bottom, LinearLayout.LayoutParams(match, wrap))
+            page.addView(bottomBar, LinearLayout.LayoutParams(match, wrap))
         }
     }
 
