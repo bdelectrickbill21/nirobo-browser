@@ -8,6 +8,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -149,6 +150,7 @@ open class BrowserActivity : Activity() {
         buildUi()
         if (isPrivate) wipePrivateData()
         loadBlocklist()
+        askNotificationsOnce()
         if (!isPrivate) {
             NewsSaver.ensureScheduled(this)
             NewsSaver.saveIfDue(this) { }
@@ -850,6 +852,15 @@ open class BrowserActivity : Activity() {
     }
 
     // ---------- helpers: buttons, screen lock, sandbox ----------
+
+    /** Android 13 and newer: ask once, so download progress can show as a notification. */
+    private fun askNotificationsOnce() {
+        if (isPrivate || Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED) return
+        if (store.getString("notif_asked", "") == "1") return
+        store.putString("notif_asked", "1")
+        requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 7)
+    }
 
     private fun toast(s: String) {
         Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
