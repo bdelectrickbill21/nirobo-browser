@@ -47,6 +47,11 @@ internal class Store(ctx: Context) {
         get() = p.getString("home_url", "https://nirobo.pages.dev/") ?: "https://nirobo.pages.dev/"
         set(v) = p.edit().putString("home_url", v).apply()
 
+    /** Third-party cookies. Off is safer. Some work and school sign-ins need them. */
+    var thirdCookies: Boolean
+        get() = p.getBoolean("third_cookies", false)
+        set(v) = p.edit().putBoolean("third_cookies", v).apply()
+
     /** True = the address bar sits at the bottom of the screen (Chrome has this choice too). */
     var barBottom: Boolean
         get() = p.getBoolean("bar_bottom", false)

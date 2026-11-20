@@ -379,7 +379,7 @@ open class BrowserActivity : Activity() {
         s.safeBrowsingEnabled = true
         if (isPrivate) s.cacheMode = WebSettings.LOAD_NO_CACHE
         s.userAgentString = mobileUa
-        CookieManager.getInstance().setAcceptThirdPartyCookies(w, false)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(w, store.thirdCookies && !isPrivate)
 
         // dark mode for ordinary web pages
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -411,6 +411,12 @@ open class BrowserActivity : Activity() {
                 }
                 if (isSandbox) {
                     toast("Blocked in the sandbox")
+                    return true
+                }
+                if (scheme != "mailto" && scheme != "tel" && scheme != "sms" &&
+                    scheme != "smsto" && scheme != "geo" && scheme != "market"
+                ) {
+                    toast("Blocked a link that tried to open another app")
                     return true
                 }
                 try {
@@ -971,7 +977,63 @@ open class BrowserActivity : Activity() {
             w.requestFocusNodeHref(h.obtainMessage())
             return true
         }
+        if (type == WebView.HitTestResult.UNKNOWN_TYPE) {
+            // pressing on text selects it. Only when nothing got selected do we show the page menu.
+            w.postDelayed({
+                w.evaluateJavascript("(window.getSelection()+'').length") { v ->
+                    if (v == "0" && current?.web === w) showPageMenu()
+                }
+            }, 300)
+        }
         return false
+    }
+
+    private fun showPageMenu() {
+        val t = current ?: return
+        val items = ArrayList<String>()
+        val acts = ArrayList<() -> Unit>()
+        fun add(name: String, action: () -> Unit) {
+            items.add(name)
+            acts.add(action)
+        }
+        if (t.web.canGoBack()) add("Back") { t.web.goBack() }
+        if (t.web.canGoForward()) add("Forward") { t.web.goForward() }
+        add("Reload") { reloadOrStop() }
+        if (!t.isAbout) {
+            add("Save as PDF or print") { printPage() }
+            add("Share") {
+                val send = Intent(Intent.ACTION_SEND)
+                send.type = "text/plain"
+                send.putExtra(Intent.EXTRA_TEXT, t.web.url ?: t.url)
+                startActivity(Intent.createChooser(send, "Share"))
+            }
+            add(if (t.reader) "Exit reading mode" else "Open in reading mode") { toggleReader() }
+            if (!isSandbox && t.url.startsWith("https://")) {
+                // sends this page's address to Google Translate
+                add("Translate to English") {
+                    loadInto(t, "https://translate.google.com/translate?sl=auto&tl=en&u=" + URLEncoder.encode(t.url, "UTF-8"))
+                }
+            }
+        }
+        AlertDialog.Builder(this)
+            .setItems(items.toTypedArray()) { _, which -> acts[which]() }
+            .show()
+    }
+
+    private fun printPage() {
+        val t = current ?: return
+        try {
+            val pm = getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+            pm.print("Nirobo page", t.web.createPrintDocumentAdapter("Nirobo page"), null)
+        } catch (e: Exception) {
+            toast("Can't print this page")
+        }
+    }
+
+    internal fun applyCookiePolicy() {
+        for (x in tabs) {
+            CookieManager.getInstance().setAcceptThirdPartyCookies(x.web, store.thirdCookies && !isPrivate)
+        }
     }
 
     private fun showLinkMenu(url: String) {
@@ -1421,6 +1483,7 @@ open class BrowserActivity : Activity() {
     }
 
     override fun onPause() {
+        if (!isPrivate) CookieManager.getInstance().flush()
         current?.web?.onPause()
         super.onPause()
     }

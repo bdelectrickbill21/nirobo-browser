@@ -109,7 +109,7 @@ internal object AboutPages {
         <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
         <meta name="color-scheme" content="${if (dark) "dark" else "light"}">
         <title>$title</title><style>${css(dark)}</style></head>
-        <body>$body<script>$script</script></body></html>"""
+        <body>$body<script>function encq(s){return encodeURIComponent(s).replace(/'/g,'%27').replace(/\(/g,'%28').replace(/\)/g,'%29')}$script</script></body></html>"""
     }
 
     private fun esc(s: String): String = s
@@ -414,11 +414,11 @@ internal object AboutPages {
             for(var i=0;i<a.length;i++){
               h+='<div class="item" style="display:flex;gap:10px;align-items:center">'+
                  '<div style="flex:1;min-width:0" onclick="open_(\''+
-                 encodeURIComponent(a[i].u)+'\')">'+
+                 encq(a[i].u)+'\')">'+
                  '<div class="t">'+esc(a[i].t)+'</div>'+
                  '<div class="u">'+esc(a[i].u)+'</div></div>'+
                  '<div style="padding:8px;color:#C4453B;font-size:18px" onclick="del(\''+
-                 encodeURIComponent(a[i].u)+'\')">✕</div></div>';
+                 encq(a[i].u)+'\')">✕</div></div>';
             }
             el.innerHTML=h;
           })(Bridge.bookmarks());
@@ -455,7 +455,7 @@ internal object AboutPages {
             if(!a.length){el.innerHTML='<div class="empty">Nothing here yet.</div>';return}
             var h='';
             for(var i=0;i<a.length;i++){
-              h+='<div class="item" onclick="open_(\''+encodeURIComponent(a[i].u)+'\')">'+
+              h+='<div class="item" onclick="open_(\''+encq(a[i].u)+'\')">'+
                  '<div class="t">'+esc(a[i].t)+'</div>'+
                  '<div class="u">'+esc(a[i].u)+' · '+when(a[i].ts)+'</div></div>';
             }
@@ -570,6 +570,7 @@ internal object AboutPages {
             <div class="si"><div class="t"><b>Ad &amp; tracker shield</b><span>Blocks ads and trackers</span></div><div class="sw" id="sw-shield" onclick="tog('shield')"><i></i></div></div>
             <div class="si"><div class="t"><b>Block cookie pop-ups</b></div><div class="sw" id="sw-cookie" onclick="tog('cookie')"><i></i></div></div>
             <div class="si"><div class="t"><b>Block screen mirroring &amp; screenshots</b><span>Casting and recording show black</span></div><div class="sw" id="sw-secure" onclick="tog('secure')"><i></i></div></div>
+            <div class="si"><div class="t"><b>Allow sign-in cookies (third-party)</b><span>Turn on if a work or school email will not stay signed in</span></div><div class="sw" id="sw-third" onclick="tog('third')"><i></i></div></div>
           </div>
           <div class="sg">
             <div class="si" onclick="if(confirm('Clear cookies, cache and history?'))clr('all')"><div class="t"><b>Clear browsing data</b><span>Cookies, cache and history</span></div></div>
@@ -687,7 +688,7 @@ internal object AboutPages {
           g('s-ver').textContent='Version '+S.version;
           g('safe-shield').textContent=S.shield?'On':'Off';
           dots('engine',eng);dots('bar',S.barBottom?'bottom':'top');
-          sw('shield',S.shield);sw('cookie',S.cookie);sw('secure',S.secure);sw('autoupdate',S.autoupdate);
+          sw('shield',S.shield);sw('cookie',S.cookie);sw('secure',S.secure);sw('autoupdate',S.autoupdate);sw('third',S.third);
           g('theme').value=S.theme;g('rsize').value=S.readerSize;
           g('zoom').value=S.textZoom;g('zlabel').textContent=S.textZoom+'%';
           if(document.activeElement!==g('home-in'))g('home-in').value=S.homeUrl;
@@ -748,7 +749,7 @@ internal object AboutPages {
               var x=s.sites[i];
               h+='<div class="row"><span class="k mono">'+esc(x.host)+'</span>'+
                  '<span class="v"><div class="sw '+(x.on?'on':'')+
-                 '" onclick="site(\''+encodeURIComponent(x.host)+'\')"><i></i></div></span></div>';
+                 '" onclick="site(\''+encq(x.host)+'\')"><i></i></div></span></div>';
             }
             el.innerHTML=h;
           })(Bridge.shieldState());
@@ -795,7 +796,7 @@ internal object AboutPages {
           var h='<div class="card">';
           for(var i=0;i<r.items.length;i++){
             var x=r.items[i];
-            h+='<div class="item" onclick="open_(\''+encodeURIComponent(x.u)+'\')">'+
+            h+='<div class="item" onclick="open_(\''+encq(x.u)+'\')">'+
                '<div class="t">'+esc(x.t)+'</div>'+
                '<div class="u">'+esc(x.s||'')+(x.d?' · '+esc(x.d.substring(0,80)):'')+'</div></div>';
           }
@@ -970,6 +971,7 @@ internal class Bridge(
         o.put("secure", store.secureScreen)
         o.put("autoupdate", store.autoUpdate)
         o.put("barBottom", store.barBottom)
+        o.put("third", store.thirdCookies)
         o.put("textZoom", store.textZoom)
         o.put("newsSavedAt", if (store.newsSavedAt == 0L) "" else
             android.text.format.DateFormat.format("d MMM, HH:mm", store.newsSavedAt).toString())
@@ -1020,6 +1022,10 @@ internal class Bridge(
             "shield" -> store.shieldEnabled = !store.shieldEnabled
             "cookie" -> store.cookieBlock = !store.cookieBlock
             "autoupdate" -> store.autoUpdate = !store.autoUpdate
+            "third" -> {
+                store.thirdCookies = !store.thirdCookies
+                act.runOnUiThread { act.applyCookiePolicy() }
+            }
             "secure" -> {
                 store.secureScreen = !store.secureScreen
                 act.runOnUiThread { act.applySecure() }
