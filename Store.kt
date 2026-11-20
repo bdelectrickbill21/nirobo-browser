@@ -47,6 +47,16 @@ internal class Store(ctx: Context) {
         get() = p.getString("home_url", "https://nirobo.pages.dev/") ?: "https://nirobo.pages.dev/"
         set(v) = p.edit().putString("home_url", v).apply()
 
+    /** True = the address bar sits at the bottom of the screen (Chrome has this choice too). */
+    var barBottom: Boolean
+        get() = p.getBoolean("bar_bottom", false)
+        set(v) = p.edit().putBoolean("bar_bottom", v).apply()
+
+    /** Text size of web pages in percent (Accessibility). */
+    var textZoom: Int
+        get() = p.getInt("text_zoom", 100)
+        set(v) = p.edit().putInt("text_zoom", v).apply()
+
     /** Block screenshots and screen mirroring (shown as black). */
     var secureScreen: Boolean
         get() = p.getBoolean("secure_screen", false)

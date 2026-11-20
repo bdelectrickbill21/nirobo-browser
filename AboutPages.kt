@@ -505,89 +505,208 @@ internal object AboutPages {
 
     private fun settings(dark: Boolean): String {
         val body = """
-        <h1>Settings</h1>
-        <p class="sub">Nirobo Browser</p>
+        <style>
+        .sh{font-size:13px;opacity:.7;margin:20px 6px 8px;font-weight:600}
+        .sg{background:rgba(127,127,127,.13);border-radius:18px;overflow:hidden;margin:0 0 6px}
+        .si{display:flex;align-items:center;gap:12px;padding:15px 18px;border-top:1px solid rgba(127,127,127,.18)}
+        .sg .si:first-child{border-top:0}
+        .si .t{flex:1;min-width:0}
+        .si .t b{display:block;font-weight:500;font-size:16px}
+        .si .t span{display:block;font-size:13px;opacity:.7;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .si .ch{opacity:.45;font-size:22px}
+        .view{display:none}
+        .view.on{display:block}
+        .back{display:flex;align-items:center;gap:12px;font-size:21px;margin:2px 0 16px}
+        .dot{width:20px;height:20px;border-radius:50%;border:2px solid currentColor;opacity:.55;position:relative;flex:none}
+        .dot.on{opacity:1}
+        .dot.on:after{content:'';position:absolute;left:3px;top:3px;right:3px;bottom:3px;border-radius:50%;background:currentColor}
+        .field{width:100%;font:inherit;padding:12px 14px;border-radius:12px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit;box-sizing:border-box}
+        .note{font-size:13px;opacity:.7;margin:10px 6px}
+        </style>
 
-        <h2>Appearance</h2>
-        <div class="card">
-          <div class="row"><span class="k">Theme</span>
-            <span class="v"><select id="theme" onchange="setTheme(this.value)"
-              style="font:inherit;padding:6px 8px;border-radius:8px;
-              border:1px solid #DCE7E1;background:transparent;color:inherit">
-              <option value="0">Follow phone</option>
-              <option value="1">Light</option>
-              <option value="2">Dark</option>
-            </select></span></div>
-          <div class="row"><span class="k">Reader text size</span>
-            <span class="v"><input id="rsize" type="range" min="14" max="26" step="1"
-              oninput="setReader(this.value)" style="width:120px"></span></div>
+        <div class="view on" id="v-home">
+          <h1>Settings</h1>
+          <div class="sh">Basics</div>
+          <div class="sg">
+            <div class="si" onclick="show('engine')"><div class="t"><b>Search engine</b><span id="s-engine">—</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('bar')"><div class="t"><b>Address bar</b><span id="s-bar">—</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('priv')"><div class="t"><b>Privacy and security</b><span id="s-priv">—</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('safe')"><div class="t"><b>Safety check</b><span id="s-safe">Updates and protection</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('def')"><div class="t"><b>Default browser</b><span>Make Nirobo open your links</span></div><div class="ch">›</div></div>
+          </div>
+          <div class="sh">Advanced</div>
+          <div class="sg">
+            <div class="si" onclick="show('home2')"><div class="t"><b>Homepage</b><span id="s-home">—</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('notif')"><div class="t"><b>Notifications</b><span>Downloads and battery reminders</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('look')"><div class="t"><b>Appearance</b><span id="s-app">—</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('acc')"><div class="t"><b>Accessibility</b><span id="s-acc">—</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('site')"><div class="t"><b>Site settings</b><span>Shield for each site</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('dl')"><div class="t"><b>Downloads</b><span>List and saved news</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('about')"><div class="t"><b>About Nirobo Browser</b><span id="s-ver">—</span></div><div class="ch">›</div></div>
+          </div>
         </div>
 
-        <h2>Privacy</h2>
-        <div class="card">
-          <div class="row"><span class="k">Ad &amp; tracker shield</span>
-            <span class="v"><div class="sw" id="sw-shield" onclick="tog('shield')"><i></i></div></span></div>
-          <div class="row"><span class="k">Block cookie pop-ups</span>
-            <span class="v"><div class="sw" id="sw-cookie" onclick="tog('cookie')"><i></i></div></span></div>
-          <div class="row"><span class="k">Block screen mirroring &amp; screenshots</span>
-            <span class="v"><div class="sw" id="sw-secure" onclick="tog('secure')"><i></i></div></span></div>
-          <div class="row"><span class="k">Check for updates when the app opens</span>
-            <span class="v"><div class="sw" id="sw-autoupdate" onclick="tog('autoupdate')"><i></i></div></span></div>
+        <div class="view" id="v-engine">
+          <div class="back" onclick="show('home')">←  Search engine</div>
+          <div class="sg">
+            <div class="si" data-g="engine" data-v="nirobo" onclick="setEngine('nirobo')"><div class="dot"></div><div class="t"><b>Nirobo</b><span>Your own Bangladeshi search</span></div></div>
+            <div class="si" data-g="engine" data-v="google" onclick="setEngine('google')"><div class="dot"></div><div class="t"><b>Google</b></div></div>
+            <div class="si" data-g="engine" data-v="ddg" onclick="setEngine('ddg')"><div class="dot"></div><div class="t"><b>DuckDuckGo</b></div></div>
+            <div class="si" data-g="engine" data-v="bing" onclick="setEngine('bing')"><div class="dot"></div><div class="t"><b>Bing</b></div></div>
+          </div>
         </div>
 
-        <h2>Search</h2>
-        <div class="card">
-          <div class="row"><span class="k">Search engine</span>
-            <span class="v mono" id="surl"></span></div>
-          <div class="row"><span class="k">Home page</span>
-            <span class="v mono" id="hurl"></span></div>
+        <div class="view" id="v-bar">
+          <div class="back" onclick="show('home')">←  Address bar</div>
+          <div class="sg">
+            <div class="si" data-g="bar" data-v="top" onclick="setBar('top')"><div class="dot"></div><div class="t"><b>Top</b></div></div>
+            <div class="si" data-g="bar" data-v="bottom" onclick="setBar('bottom')"><div class="dot"></div><div class="t"><b>Bottom</b><span>Easier to reach with one thumb</span></div></div>
+          </div>
         </div>
 
-        <h2>Saved news</h2>
-        <div class="card">
-          <div class="row"><span class="k">Last saved</span><span class="v" id="news">—</span></div>
-          <div class="row"><span class="k">Refresh now</span>
-            <span class="v"><button class="ghost" onclick="saveNews()">Save</button></span></div>
+        <div class="view" id="v-priv">
+          <div class="back" onclick="show('home')">←  Privacy and security</div>
+          <div class="sg">
+            <div class="si"><div class="t"><b>Ad &amp; tracker shield</b><span>Blocks ads and trackers</span></div><div class="sw" id="sw-shield" onclick="tog('shield')"><i></i></div></div>
+            <div class="si"><div class="t"><b>Block cookie pop-ups</b></div><div class="sw" id="sw-cookie" onclick="tog('cookie')"><i></i></div></div>
+            <div class="si"><div class="t"><b>Block screen mirroring &amp; screenshots</b><span>Casting and recording show black</span></div><div class="sw" id="sw-secure" onclick="tog('secure')"><i></i></div></div>
+          </div>
+          <div class="sg">
+            <div class="si" onclick="if(confirm('Clear cookies, cache and history?'))clr('all')"><div class="t"><b>Clear browsing data</b><span>Cookies, cache and history</span></div></div>
+          </div>
+          <p class="note">Tip: long-press a link and choose Open in sandbox for links you do not trust.</p>
         </div>
 
-        <h2>Data</h2>
-        <div class="card">
-          <div class="row"><span class="k">History</span>
-            <span class="v"><button class="ghost" onclick="clr('history')">Clear</button></span></div>
-          <div class="row"><span class="k">Bookmarks</span>
-            <span class="v" id="bcount">—</span></div>
-          <div class="row"><span class="k">Downloads list</span>
-            <span class="v"><button class="ghost" onclick="clr('downloads')">Clear</button></span></div>
+        <div class="view" id="v-safe">
+          <div class="back" onclick="show('home')">←  Safety check</div>
+          <div class="sg">
+            <div class="si"><div class="t"><b>Updates</b><span id="upd">—</span></div></div>
+            <div class="si"><div class="t"><b>Last checked</b><span id="updlast">—</span></div></div>
+            <div class="si"><div class="t"><b>Check for updates now</b></div><button class="ghost" onclick="checkUpd()">Check</button></div>
+            <div class="si"><div class="t"><b>Check when the app opens</b></div><div class="sw" id="sw-autoupdate" onclick="tog('autoupdate')"><i></i></div></div>
+          </div>
+          <div class="sg">
+            <div class="si"><div class="t"><b>Ad shield</b><span id="safe-shield">—</span></div></div>
+            <div class="si"><div class="t"><b>Only secure pages</b><span>Nirobo opens https pages only</span></div></div>
+          </div>
         </div>
 
-        <h2>About</h2>
-        <div class="card">
-          <div class="row"><span class="k">Version</span><span class="v" id="ver">—</span></div>
-          <div class="row"><span class="k">Internal pages</span>
-            <span class="v"><a href="about:version">about:version</a></span></div>
+        <div class="view" id="v-def">
+          <div class="back" onclick="show('home')">←  Default browser</div>
+          <div class="sg"><div class="si" onclick="sysOpen('default')"><div class="t"><b>Open Android settings</b><span>Choose Nirobo Browser as the browser app</span></div><div class="ch">›</div></div></div>
+        </div>
+
+        <div class="view" id="v-home2">
+          <div class="back" onclick="show('home')">←  Homepage</div>
+          <input class="field" id="home-in" type="url" autocapitalize="off" autocomplete="off">
+          <p class="note">Opens for every new tab and for the home button. Leave it empty to go back to Nirobo.</p>
+          <button class="ghost" onclick="saveHome()">Save</button>
+        </div>
+
+        <div class="view" id="v-notif">
+          <div class="back" onclick="show('home')">←  Notifications</div>
+          <div class="sg"><div class="si" onclick="sysOpen('notifications')"><div class="t"><b>Open Android notification settings</b><span>Download progress and battery reminders</span></div><div class="ch">›</div></div></div>
+        </div>
+
+        <div class="view" id="v-look">
+          <div class="back" onclick="show('home')">←  Appearance</div>
+          <div class="sg">
+            <div class="si"><div class="t"><b>Theme</b></div>
+              <select id="theme" onchange="setTheme(this.value)" style="font:inherit;padding:6px 8px;border-radius:8px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit">
+                <option value="0">Follow phone</option><option value="1">Light</option><option value="2">Dark</option>
+              </select></div>
+            <div class="si"><div class="t"><b>Reader text size</b></div>
+              <input id="rsize" type="range" min="14" max="26" step="1" oninput="setReader(this.value)" style="width:120px"></div>
+          </div>
+        </div>
+
+        <div class="view" id="v-acc">
+          <div class="back" onclick="show('home')">←  Accessibility</div>
+          <div class="sg">
+            <div class="si"><div class="t"><b>Text size</b><span id="zlabel">100%</span></div></div>
+            <div class="si"><input id="zoom" type="range" min="50" max="200" step="10" oninput="setZoom(this.value)" onchange="load()" style="width:100%"></div>
+          </div>
+          <p class="note">Makes the text bigger or smaller on every web page.</p>
+        </div>
+
+        <div class="view" id="v-site">
+          <div class="back" onclick="show('home')">←  Site settings</div>
+          <div class="sg"><div class="si" onclick="location.href='about:shield'"><div class="t"><b>Ad shield for each site</b><span>See and change the sites you set</span></div><div class="ch">›</div></div></div>
+        </div>
+
+        <div class="view" id="v-dl">
+          <div class="back" onclick="show('home')">←  Downloads</div>
+          <div class="sg">
+            <div class="si" onclick="location.href='about:downloads'"><div class="t"><b>Open downloads list</b></div><div class="ch">›</div></div>
+            <div class="si"><div class="t"><b>Downloads list</b></div><button class="ghost" onclick="clr('downloads')">Clear</button></div>
+            <div class="si"><div class="t"><b>History</b></div><button class="ghost" onclick="clr('history')">Clear</button></div>
+            <div class="si"><div class="t"><b>Bookmarks</b><span id="bcount">—</span></div></div>
+          </div>
+          <div class="sh">Saved news</div>
+          <div class="sg">
+            <div class="si"><div class="t"><b>Last saved</b><span id="news">—</span></div></div>
+            <div class="si"><div class="t"><b>Save it again now</b></div><button class="ghost" onclick="saveNews()">Save</button></div>
+          </div>
+        </div>
+
+        <div class="view" id="v-about">
+          <div class="back" onclick="show('home')">←  About Nirobo Browser</div>
+          <div class="sg">
+            <div class="si"><div class="t"><b>Version</b><span id="ver">—</span></div></div>
+            <div class="si" onclick="location.href='about:version'"><div class="t"><b>Internal pages</b><span>about:version</span></div><div class="ch">›</div></div>
+          </div>
         </div>
         """
         val script = """
-        function sw(id,on){var e=document.getElementById('sw-'+id);
-          if(on)e.classList.add('on');else e.classList.remove('on')}
+        function g(i){return document.getElementById(i)}
+        function show(id){
+          var v=document.querySelectorAll('.view');
+          for(var i=0;i<v.length;i++)v[i].classList.remove('on');
+          g('v-'+id).classList.add('on');window.scrollTo(0,0)}
+        function sw(id,on){var e=g('sw-'+id);if(!e)return;if(on)e.classList.add('on');else e.classList.remove('on')}
+        function engineOf(u){u=u||'';
+          if(u.indexOf('google.')>=0)return 'google';
+          if(u.indexOf('duckduckgo')>=0)return 'ddg';
+          if(u.indexOf('bing.com')>=0)return 'bing';
+          return 'nirobo'}
+        var NAMES={nirobo:'Nirobo',google:'Google',ddg:'DuckDuckGo',bing:'Bing'};
+        function dots(group,val){
+          var e=document.querySelectorAll('[data-g="'+group+'"]');
+          for(var i=0;i<e.length;i++){
+            var d=e[i].querySelector('.dot');
+            if(e[i].getAttribute('data-v')===String(val))d.classList.add('on');else d.classList.remove('on')}}
         function load(){
-          (function(json){
-            var s; try{s=JSON.parse(json)}catch(e){return}
-            document.getElementById('theme').value=s.theme;
-            document.getElementById('rsize').value=s.readerSize;
-            sw('shield',s.shield); sw('cookie',s.cookie);
-            sw('secure',s.secure); sw('autoupdate',s.autoupdate);
-            document.getElementById('surl').textContent=s.searchUrl;
-            document.getElementById('hurl').textContent=s.homeUrl;
-            document.getElementById('ver').textContent=s.version;
-            document.getElementById('bcount').textContent=s.bookmarks+' saved';
-            document.getElementById('news').textContent=s.newsSavedAt||'never';
-          })(Bridge.settings());
+          var S; try{S=JSON.parse(Bridge.settings())}catch(e){return}
+          var eng=engineOf(S.searchUrl);
+          g('s-engine').textContent=NAMES[eng];
+          g('s-bar').textContent=S.barBottom?'Bottom':'Top';
+          g('s-priv').textContent=(S.shield?'Shield on':'Shield off')+(S.secure?' · screen locked':'');
+          g('s-home').textContent=String(S.homeUrl).replace('https://','');
+          g('s-app').textContent=['Follow phone','Light','Dark'][S.theme]||'';
+          g('s-acc').textContent=S.textZoom+'% text';
+          g('s-ver').textContent='Version '+S.version;
+          g('safe-shield').textContent=S.shield?'On':'Off';
+          dots('engine',eng);dots('bar',S.barBottom?'bottom':'top');
+          sw('shield',S.shield);sw('cookie',S.cookie);sw('secure',S.secure);sw('autoupdate',S.autoupdate);
+          g('theme').value=S.theme;g('rsize').value=S.readerSize;
+          g('zoom').value=S.textZoom;g('zlabel').textContent=S.textZoom+'%';
+          if(document.activeElement!==g('home-in'))g('home-in').value=S.homeUrl;
+          g('news').textContent=S.newsSavedAt||'never';
+          g('bcount').textContent=S.bookmarks+' saved';
+          g('ver').textContent=S.version;
+          var u=null; try{u=JSON.parse(Bridge.updateState())}catch(e){}
+          if(u){g('upd').textContent=u.status;g('updlast').textContent=u.last}
         }
+        function setEngine(k){Bridge.set('engine',k);load()}
+        function setBar(k){Bridge.set('bar',k);load()}
+        function tog(k){Bridge.toggle(k);load()}
         function setTheme(v){Bridge.set('theme',v);load()}
         function setReader(v){Bridge.set('readerSize',v)}
-        function tog(k){Bridge.toggle(k);load()}
+        function setZoom(v){g('zlabel').textContent=v+'%';Bridge.set('textZoom',v)}
+        function saveHome(){Bridge.set('homepage',g('home-in').value);load()}
         function clr(k){Bridge.clear(k);load()}
+        function sysOpen(w){Bridge.openSystem(w)}
+        function checkUpd(){g('upd').textContent='Checking…';Bridge.checkUpdate();setTimeout(load,2500);setTimeout(load,7000)}
         function saveNews(){Bridge.saveNews();setTimeout(load,2500)}
         load();
         """
@@ -850,6 +969,8 @@ internal class Bridge(
         o.put("bookmarks", store.bookmarks().length())
         o.put("secure", store.secureScreen)
         o.put("autoupdate", store.autoUpdate)
+        o.put("barBottom", store.barBottom)
+        o.put("textZoom", store.textZoom)
         o.put("newsSavedAt", if (store.newsSavedAt == 0L) "" else
             android.text.format.DateFormat.format("d MMM, HH:mm", store.newsSavedAt).toString())
         return o.toString()
@@ -860,7 +981,37 @@ internal class Bridge(
         when (key) {
             "theme" -> store.theme = value.toIntOrNull() ?: 0
             "readerSize" -> store.readerSize = (value.toIntOrNull() ?: 18).coerceIn(14, 26)
+            "engine" -> store.searchUrl = when (value) {
+                "google" -> "https://www.google.com/search?q="
+                "ddg" -> "https://duckduckgo.com/?q="
+                "bing" -> "https://www.bing.com/search?q="
+                else -> "https://nirobo.pages.dev/?q="
+            }
+            "bar" -> {
+                store.barBottom = value == "bottom"
+                act.runOnUiThread { act.applyBarPosition() }
+            }
+            "textZoom" -> {
+                store.textZoom = (value.toIntOrNull() ?: 100).coerceIn(50, 200)
+                act.runOnUiThread { act.applyTextZoom() }
+            }
+            "homepage" -> {
+                var u = value.trim()
+                if (u.isEmpty()) {
+                    u = "https://nirobo.pages.dev/"
+                } else if (u.startsWith("http://")) {
+                    u = "https://" + u.substring(7)
+                } else if (!u.startsWith("https://")) {
+                    u = "https://" + u
+                }
+                store.homeUrl = u
+            }
         }
+    }
+
+    @JavascriptInterface
+    fun openSystem(what: String) {
+        act.runOnUiThread { act.openSystemSetting(what) }
     }
 
     @JavascriptInterface
@@ -932,6 +1083,7 @@ internal class Bridge(
         when (key) {
             "history" -> store.clearHistory()
             "downloads" -> store.clearDownloads()
+            "all" -> act.runOnUiThread { act.clearBrowsingData() }
         }
     }
 

@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -19,6 +20,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.os.Message
 import android.text.InputType
 import android.text.TextUtils
@@ -45,6 +47,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -82,7 +85,7 @@ open class BrowserActivity : Activity() {
     /** The sandbox is a private window that is locked down much further (see SandboxActivity). */
     protected open val isSandbox: Boolean get() = false
 
-    private val homeUrl = "https://nirobo.pages.dev/"
+    private val homeUrl: String get() = store.homeUrl
     private val searchUrl = "https://nirobo.pages.dev/?q="
     private val desktopUa =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -110,6 +113,7 @@ open class BrowserActivity : Activity() {
     private lateinit var switcherList: LinearLayout
     private lateinit var findBar: LinearLayout
     private lateinit var findInput: EditText
+    private lateinit var topBar: LinearLayout
     private lateinit var reloadBtn: TextView
     private lateinit var lockBtn: TextView
 
@@ -188,6 +192,7 @@ open class BrowserActivity : Activity() {
         page.orientation = LinearLayout.VERTICAL
 
         val top = LinearLayout(this)
+        topBar = top
         top.orientation = LinearLayout.HORIZONTAL
         top.gravity = Gravity.CENTER_VERTICAL
         top.setBackgroundColor(barColor)
@@ -304,11 +309,7 @@ open class BrowserActivity : Activity() {
 
         button("\u22EE") { showMenu() }
 
-        page.addView(top, LinearLayout.LayoutParams(match, wrap))
-        page.addView(bar, LinearLayout.LayoutParams(match, dp(3)))
-        page.addView(findBar, LinearLayout.LayoutParams(match, wrap))
-        page.addView(holder, LinearLayout.LayoutParams(match, 0, 1f))
-        page.addView(bottom, LinearLayout.LayoutParams(match, wrap))
+        applyBarPosition()
         root.addView(page, FrameLayout.LayoutParams(match, match))
 
         switcher = LinearLayout(this)
@@ -360,6 +361,7 @@ open class BrowserActivity : Activity() {
         val w = WebView(this)
         val t = Tab(w)
         val s = w.settings
+        s.textZoom = store.textZoom
         s.javaScriptEnabled = !isSandbox || scriptsOn
         s.domStorageEnabled = !isSandbox
         s.allowFileAccess = false
@@ -1117,61 +1119,70 @@ open class BrowserActivity : Activity() {
 
     // ---------- menu ----------
 
+    private var menuPopup: PopupWindow? = null
+
     private fun showMenu() {
         val t = current ?: return
-        val items = ArrayList<String>()
-        val acts = ArrayList<() -> Unit>()
-        fun add(name: String, action: () -> Unit) {
-            items.add(name)
-            acts.add(action)
-        }
-        add("\uFF0B New tab") { newTab(startUrl, false) }
-        if (!isPrivate) add("\uD83D\uDD76 New private tab") { openPrivate(null) }
-        if (!isPrivate) {
-            add("\u2606 Bookmarks") { loadInto(t, "about:bookmarks") }
-            add("\uD83D\uDD52 History") { loadInto(t, "about:history") }
-            add("\u2193 Downloads") { loadInto(t, "about:downloads") }
-        }
-        add("\uD83D\uDD0D Find in page") { openFind() }
-        add(if (t.reader) "Exit reader mode" else "\uD83D\uDCD6 Reader mode") { toggleReader() }
-        add("Share page") {
-            val send = Intent(Intent.ACTION_SEND)
-            send.type = "text/plain"
-            send.putExtra(Intent.EXTRA_TEXT, current?.web?.url ?: homeUrl)
-            startActivity(Intent.createChooser(send, "Share"))
-        }
-        if (!isSandbox) {
-            add("Open in another app") {
-                val view = Intent(Intent.ACTION_VIEW, Uri.parse(current?.web?.url ?: homeUrl))
-                startActivity(Intent.createChooser(view, "Open with"))
-            }
-        }
-        add(if (t.desktop) "Use mobile site" else "Use desktop site") { toggleDesktop() }
-        if (isSandbox) {
-            add(if (scriptsOn) "Sandbox: turn scripts OFF" else "Sandbox: turn scripts ON") { toggleSandboxScripts() }
-        }
-        if (!isPrivate) add("Check for updates") { Updater.check(this, true) }
-        add(
-            if (isSandbox) "Close the sandbox"
-            else if (isPrivate) "Close all private tabs"
-            else "Clear browsing data"
-        ) { clearData() }
-        if (!isSandbox) add("About Nirobo Browser") { loadInto(t, "about:version") }
+        menuPopup?.dismiss()
+        val dark = isDark()
+        val ink = Color.parseColor(if (dark) "#E8EAED" else "#202124")
+        val soft = Color.parseColor(if (dark) "#9AA0A6" else "#5F6368")
+        val line = Color.parseColor(if (dark) "#3C4043" else "#E3E6E8")
+        val match = ViewGroup.LayoutParams.MATCH_PARENT
+        val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+        val ref = arrayOfNulls<PopupWindow>(1)
 
-        // the icon row on top of the menu, like Chrome: forward, bookmark, downloads, info, reload
-        val dlgRef = arrayOfNulls<AlertDialog>(1)
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.setPadding(dp(4), dp(8), dp(4), dp(4))
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        val bg = GradientDrawable()
+        bg.setColor(Color.parseColor(if (dark) "#2B2D31" else "#FFFFFF"))
+        bg.cornerRadius = dp(18).toFloat()
+        bg.setStroke(dp(1), line)
+        box.background = bg
+        box.setPadding(0, dp(6), 0, dp(6))
+
+        fun divider() {
+            val v = View(this)
+            v.setBackgroundColor(line)
+            val lp = LinearLayout.LayoutParams(match, dp(1))
+            lp.setMargins(dp(14), dp(6), dp(14), dp(6))
+            box.addView(v, lp)
+        }
+
+        fun item(glyph: String, name: String, trailing: String, action: () -> Unit) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(dp(18), 0, dp(18), 0)
+            val gl = label(glyph, 18f, soft)
+            gl.gravity = Gravity.CENTER
+            row.addView(gl, LinearLayout.LayoutParams(dp(30), dp(48)))
+            val nm = label(name, 16f, ink)
+            nm.setPadding(dp(14), 0, 0, 0)
+            row.addView(nm, LinearLayout.LayoutParams(0, wrap, 1f))
+            if (trailing.isNotEmpty()) {
+                row.addView(label(trailing, 18f, Color.parseColor("#1A73E8")), LinearLayout.LayoutParams(wrap, wrap))
+            }
+            row.setOnClickListener {
+                ref[0]?.dismiss()
+                action()
+            }
+            box.addView(row, LinearLayout.LayoutParams(match, wrap))
+        }
+
+        // top icon row: forward, bookmark, downloads, info, reload
+        val icons = LinearLayout(this)
+        icons.orientation = LinearLayout.HORIZONTAL
+        icons.setPadding(dp(8), dp(2), dp(8), dp(2))
         fun icon(symbol: String, action: () -> Unit) {
-            val v = label(symbol, 22f, barColor)
+            val v = label(symbol, 22f, ink)
             v.gravity = Gravity.CENTER
             v.setPadding(0, dp(10), 0, dp(10))
             v.setOnClickListener {
-                dlgRef[0]?.dismiss()
+                ref[0]?.dismiss()
                 action()
             }
-            row.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            icons.addView(v, LinearLayout.LayoutParams(0, wrap, 1f))
         }
         icon("\u25B6") { if (t.web.canGoForward()) t.web.goForward() }
         if (!isPrivate) {
@@ -1180,13 +1191,105 @@ open class BrowserActivity : Activity() {
         }
         icon("\u24D8") { showSiteInfo() }
         icon("\u21BB") { reloadOrStop() }
+        box.addView(icons, LinearLayout.LayoutParams(match, wrap))
+        divider()
 
-        val dlg = AlertDialog.Builder(this)
-            .setCustomTitle(row)
-            .setItems(items.toTypedArray()) { _, which -> acts[which]() }
-            .create()
-        dlgRef[0] = dlg
-        dlg.show()
+        item("\uFF0B", "New tab", "") { newTab(startUrl, false) }
+        if (!isPrivate) item("\uD83D\uDD76", "New private tab", "") { openPrivate(null) }
+        divider()
+        if (!isPrivate) {
+            item("\u2193", "Downloads", "") { loadInto(t, "about:downloads") }
+            item("\u2605", "Bookmarks", "") { loadInto(t, "about:bookmarks") }
+            item("\uD83D\uDD52", "History", "") { loadInto(t, "about:history") }
+            divider()
+        }
+        item("\uD83D\uDCE4", "Share\u2026", "") {
+            val send = Intent(Intent.ACTION_SEND)
+            send.type = "text/plain"
+            send.putExtra(Intent.EXTRA_TEXT, current?.web?.url ?: homeUrl)
+            startActivity(Intent.createChooser(send, "Share"))
+        }
+        item("\uD83D\uDD0D", "Find in page", "") { openFind() }
+        item("\uD83D\uDCD6", if (t.reader) "Exit reading mode" else "Show reading mode", "") { toggleReader() }
+        item("\uD83D\uDDA5", "Desktop site", if (t.desktop) "\u2611" else "\u2610") { toggleDesktop() }
+        if (!isSandbox) {
+            item("\u2197", "Open in another app", "") {
+                val view = Intent(Intent.ACTION_VIEW, Uri.parse(current?.web?.url ?: homeUrl))
+                startActivity(Intent.createChooser(view, "Open with"))
+            }
+        }
+        if (isSandbox) {
+            item("\u26A0", "Scripts", if (scriptsOn) "ON" else "OFF") { toggleSandboxScripts() }
+        }
+        divider()
+        if (!isPrivate) item("\u2699", "Settings", "") { loadInto(t, "about:settings") }
+        if (!isPrivate) item("\uD83D\uDD04", "Check for updates", "") { Updater.check(this, true) }
+        item(
+            "\uD83D\uDDD1",
+            if (isSandbox) "Close the sandbox" else if (isPrivate) "Close all private tabs" else "Clear browsing data",
+            ""
+        ) { clearData() }
+        if (!isSandbox) item("\u24D8", "About Nirobo Browser", "") { loadInto(t, "about:version") }
+
+        val scroll = ScrollView(this)
+        scroll.addView(box, FrameLayout.LayoutParams(match, wrap))
+        val width = dp(270)
+        box.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        val maxH = (resources.displayMetrics.heightPixels * 0.72).toInt()
+        val pw = PopupWindow(scroll, width, minOf(box.measuredHeight, maxH), true)
+        ref[0] = pw
+        pw.isOutsideTouchable = true
+        pw.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        menuPopup = pw
+        val lift = bottom.height + (if (store.barBottom) topBar.height else 0) + dp(6)
+        pw.showAtLocation(root, Gravity.BOTTOM or Gravity.END, dp(8), lift)
+    }
+
+    /** Puts the address bar on top or at the bottom (Settings, Address bar). */
+    internal fun applyBarPosition() {
+        val match = ViewGroup.LayoutParams.MATCH_PARENT
+        val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+        page.removeAllViews()
+        if (store.barBottom) {
+            page.addView(bar, LinearLayout.LayoutParams(match, dp(3)))
+            page.addView(holder, LinearLayout.LayoutParams(match, 0, 1f))
+            page.addView(findBar, LinearLayout.LayoutParams(match, wrap))
+            page.addView(topBar, LinearLayout.LayoutParams(match, wrap))
+            page.addView(bottom, LinearLayout.LayoutParams(match, wrap))
+        } else {
+            page.addView(topBar, LinearLayout.LayoutParams(match, wrap))
+            page.addView(bar, LinearLayout.LayoutParams(match, dp(3)))
+            page.addView(findBar, LinearLayout.LayoutParams(match, wrap))
+            page.addView(holder, LinearLayout.LayoutParams(match, 0, 1f))
+            page.addView(bottom, LinearLayout.LayoutParams(match, wrap))
+        }
+    }
+
+    /** Text size of web pages (Settings, Accessibility). */
+    internal fun applyTextZoom() {
+        for (x in tabs) x.web.settings.textZoom = store.textZoom
+    }
+
+    internal fun clearBrowsingData() {
+        clearData()
+    }
+
+    /** Opens a page of Android's own settings (default browser, notifications). */
+    internal fun openSystemSetting(what: String) {
+        try {
+            val i = when (what) {
+                "default" -> Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                "notifications" -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                else -> return
+            }
+            startActivity(i)
+        } catch (e: Exception) {
+            toast("Can't open this setting on your phone")
+        }
     }
 
     private fun toggleBookmark(t: Tab) {
