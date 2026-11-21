@@ -580,8 +580,19 @@ open class BrowserActivity : Activity() {
                 toast("Downloads are blocked in the sandbox")
                 return@setDownloadListener
             }
+            if (!url.startsWith("https://")) {
+                toast("Blocked: downloads must use a secure (https) link")
+                return@setDownloadListener
+            }
             try {
-                val name = URLUtil.guessFileName(url, contentDisposition, mimetype)
+                var name = URLUtil.guessFileName(url, contentDisposition, mimetype)
+                // keep only a plain file name: no folders, no hidden-file tricks
+                name = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trimStart('.')
+                if (name.isEmpty()) name = "download"
+                if (name.lowercase().endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
+                    toast("Blocked: Nirobo Browser does not download app files (.apk)")
+                    return@setDownloadListener
+                }
                 if (Build.VERSION.SDK_INT < 29) {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 } else {
@@ -655,7 +666,8 @@ open class BrowserActivity : Activity() {
         val u = toUrl(input) ?: return
         t.isAbout = false
         t.web.removeJavascriptInterface("Bridge")
-        t.web.loadUrl(u)
+        // tell the website: please do not track me (Global Privacy Control + Do Not Track)
+        t.web.loadUrl(u, mapOf("Sec-GPC" to "1", "DNT" to "1"))
     }
 
     private fun switchTo(t: Tab) {
@@ -882,9 +894,18 @@ open class BrowserActivity : Activity() {
         ""
     }
 
+    // endings made of two parts: "a.com.bd" and "b.com.bd" are different sites
+    private val twoPartEndings = setOf(
+        "com.bd", "gov.bd", "edu.bd", "org.bd", "net.bd", "ac.bd", "mil.bd", "info.bd",
+        "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "co.in", "co.jp", "com.br",
+        "co.za", "com.pk", "com.np", "com.lk"
+    )
+
     private fun lastTwo(h: String): String {
         val p = h.lowercase().split('.')
-        return if (p.size <= 2) h.lowercase() else p[p.size - 2] + "." + p[p.size - 1]
+        if (p.size <= 2) return h.lowercase()
+        val end = p[p.size - 2] + "." + p[p.size - 1]
+        return if (end in twoPartEndings) p[p.size - 3] + "." + end else end
     }
 
     /** Same site, roughly: the last two parts of the name match. */
@@ -1410,6 +1431,7 @@ open class BrowserActivity : Activity() {
         val l = line.trim().lowercase()
         if (l.isEmpty() || l.startsWith("#")) return
         val h = l.split(Regex("\\s+")).last()
+        if (h == "pages.dev" || h == "nirobo.pages.dev" || h.endsWith(".nirobo.pages.dev")) return
         if (h.contains('.') && !h.contains('/') && !h.contains(':') && h != "localhost") hosts.add(h)
     }
 
@@ -1436,7 +1458,16 @@ open class BrowserActivity : Activity() {
                     c.connectTimeout = 15000
                     c.readTimeout = 30000
                     if (c.responseCode == 200) {
-                        val text = c.inputStream.bufferedReader().readText()
+                        val buf = java.io.ByteArrayOutputStream()
+                        c.inputStream.use { ins ->
+                            val chunk = ByteArray(8192)
+                            while (buf.size() < 3_000_000) {
+                                val n = ins.read(chunk)
+                                if (n < 0) break
+                                buf.write(chunk, 0, n)
+                            }
+                        }
+                        val text = buf.toString("UTF-8")
                         if (text.length > 1000) {
                             saved.writeText(text)
                             text.lineSequence().forEach { addHost(it) }

@@ -72,7 +72,16 @@ internal object NewsSaver {
                 c.setRequestProperty("User-Agent", "NiroboBrowser/1.0 (Android)")
                 c.setRequestProperty("Accept", "application/json")
                 if (c.responseCode == 200) {
-                    val text = c.inputStream.bufferedReader().readText()
+                    val buf = java.io.ByteArrayOutputStream()
+                    c.inputStream.use { ins ->
+                        val chunk = ByteArray(8192)
+                        while (buf.size() < 2_000_000) {
+                            val n = ins.read(chunk)
+                            if (n < 0) break
+                            buf.write(chunk, 0, n)
+                        }
+                    }
+                    val text = buf.toString("UTF-8")
                     val parsed = JSONObject(text)
                     val items = parsed.optJSONArray("items")
                     if (items != null && items.length() > 0) {
@@ -80,6 +89,8 @@ internal object NewsSaver {
                         val n = minOf(items.length(), KEEP)
                         for (i in 0 until n) {
                             val o = items.optJSONObject(i) ?: continue
+                            // only secure links are kept
+                            if (!o.optString("u").startsWith("https://")) continue
                             val slim = JSONObject()
                             slim.put("t", o.optString("t"))
                             slim.put("u", o.optString("u"))

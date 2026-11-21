@@ -37,6 +37,7 @@ internal object Updater {
 
     private const val FALLBACK_REPO = "bdelectrickbill21/nirobo-browser"
     private const val CHECK_EVERY_MS = 6L * 3600L * 1000L
+    private const val MAX_APK_BYTES = 150L * 1024L * 1024L   // refuse absurdly big files
 
     private val pool = Executors.newSingleThreadExecutor()
 
@@ -92,6 +93,8 @@ internal object Updater {
         busy = true
         if (manual) toast(act, "Checking for updates...")
         val url = feedUrl(act)
+        // the app file must come from THIS repo's releases, nowhere else
+        val apkPrefix = "https://github.com/" + repo(act) + "/releases/download/"
         val have = installedCode(act)
 
         pool.execute {
@@ -107,7 +110,8 @@ internal object Updater {
                 if (code == 200) {
                     val o = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
                     val apk = o.optString("apk")
-                    if (apk.startsWith("https://")) {
+                    val shaOk = Regex("[0-9a-fA-F]{64}").matches(o.optString("sha256"))
+                    if (apk.startsWith(apkPrefix) && shaOk && o.optLong("size") in 1L..MAX_APK_BYTES) {
                         info = Info(
                             o.optLong("versionCode"), o.optString("versionName"), apk,
                             o.optString("sha256").lowercase(), o.optLong("size"), o.optString("notes")
@@ -202,6 +206,7 @@ internal object Updater {
                             out.write(buf, 0, n)
                             md.update(buf, 0, n)
                             done += n
+                            if (done > MAX_APK_BYTES) throw Exception("the file is too big")
                             if (total > 0L) {
                                 val pct = (done * 100L / total).toInt()
                                 if (pct != lastPct) {
@@ -213,10 +218,10 @@ internal object Updater {
                     }
                 }
                 c.disconnect()
-                if (info.sha.isNotEmpty()) {
-                    val hex = md.digest().joinToString("") { b -> "%02x".format(b) }
-                    if (hex != info.sha) throw Exception("the file is damaged, please try again")
-                }
+                // the fingerprint and the size are always checked (never skipped)
+                if (done != info.size) throw Exception("the file size is wrong, please try again")
+                val hex = md.digest().joinToString("") { b -> "%02x".format(b) }
+                if (hex != info.sha) throw Exception("the file is damaged, please try again")
             } catch (e: Exception) {
                 err = e.message ?: "the download failed"
             }
