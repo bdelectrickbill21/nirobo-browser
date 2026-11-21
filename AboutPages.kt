@@ -535,7 +535,7 @@ internal object AboutPages {
             <div class="si" onclick="show('engine')"><div class="t"><b>Search engine</b><span id="s-engine">—</span></div><div class="ch">›</div></div>
             <div class="si" onclick="show('bar')"><div class="t"><b>Address bar</b><span id="s-bar">—</span></div><div class="ch">›</div></div>
             <div class="si" onclick="show('priv')"><div class="t"><b>Privacy and security</b><span id="s-priv">—</span></div><div class="ch">›</div></div>
-            <div class="si" onclick="show('safe')"><div class="t"><b>Safety check</b><span id="s-safe">Updates and protection</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="show('safe')"><div class="t"><b>Safety check</b><span id="s-safe">Check, clean up and test links</span></div><div class="ch">›</div></div>
             <div class="si" onclick="show('def')"><div class="t"><b>Default browser</b><span>Make Nirobo open your links</span></div><div class="ch">›</div></div>
           </div>
           <div class="sh">Advanced</div>
@@ -596,14 +596,26 @@ internal object AboutPages {
         <div class="view" id="v-safe">
           <div class="back" onclick="show('home')">←  Safety check</div>
           <div class="sg">
-            <div class="si"><div class="t"><b>Updates</b><span id="upd">—</span></div></div>
-            <div class="si"><div class="t"><b>Last checked</b><span id="updlast">—</span></div></div>
-            <div class="si"><div class="t"><b>Check for updates now</b></div><button class="ghost" onclick="checkUpd()">Check</button></div>
-            <div class="si"><div class="t"><b>Check when the app opens</b></div><div class="sw" id="sw-autoupdate" onclick="tog('autoupdate')"><i></i></div></div>
+            <div class="si"><div class="t"><b>Run safety check</b><span id="sc-sum">Tap Check to test your settings</span></div><button onclick="runCheck()">Check</button></div>
           </div>
+          <div class="sg" id="sc-list"></div>
+
+          <div class="sh">Clean up</div>
           <div class="sg">
-            <div class="si"><div class="t"><b>Ad shield</b><span id="safe-shield">—</span></div></div>
-            <div class="si"><div class="t"><b>Only secure pages</b><span>Nirobo opens https pages only</span></div></div>
+            <div class="si"><div class="t"><b>Clear history</b></div><button class="ghost" onclick="cleanIt('history')">Clear</button></div>
+            <div class="si"><div class="t"><b>Clear cookies</b><span>You will be signed out of websites</span></div><button class="ghost" onclick="cleanIt('cookies')">Clear</button></div>
+            <div class="si"><div class="t"><b>Clear cache</b><span>Saved pictures and files of websites</span></div><button class="ghost" onclick="cleanIt('cache')">Clear</button></div>
+            <div class="si"><div class="t"><b>Clear site data</b><span>Website storage and location permissions</span></div><button class="ghost" onclick="cleanIt('site')">Clear</button></div>
+            <div class="si"><div class="t"><b>Clear everything</b><span>All of the above, and your history</span></div><button class="ghost" onclick="if(confirm('Clear everything?'))cleanIt('all')">Clear</button></div>
+          </div>
+
+          <div class="sh">Test a link</div>
+          <div style="padding:0 2px">
+            <input class="field" id="lk" placeholder="Paste a link here. It will not be opened." type="url" autocapitalize="off" autocomplete="off">
+            <div style="height:10px"></div>
+            <button onclick="checkLink()">Test link</button>
+            <div class="sg" id="lk-out" style="margin-top:12px"></div>
+            <div class="note">A quick check only. It cannot promise that a link is safe.</div>
           </div>
         </div>
 
@@ -669,6 +681,10 @@ internal object AboutPages {
           <div class="back" onclick="show('home')">←  About Nirobo Browser</div>
           <div class="sg">
             <div class="si"><div class="t"><b>Version</b><span id="ver">—</span></div></div>
+            <div class="si"><div class="t"><b>Updates</b><span id="upd">—</span></div></div>
+            <div class="si"><div class="t"><b>Last checked</b><span id="updlast">—</span></div></div>
+            <div class="si"><div class="t"><b>Check for updates now</b></div><button class="ghost" onclick="checkUpd()">Check</button></div>
+            <div class="si"><div class="t"><b>Check when the app opens</b></div><div class="sw" id="sw-autoupdate" onclick="tog('autoupdate')"><i></i></div></div>
             <div class="si" onclick="location.href='about:version'"><div class="t"><b>Internal pages</b><span>about:version</span></div><div class="ch">›</div></div>
           </div>
         </div>
@@ -705,7 +721,6 @@ internal object AboutPages {
           g('s-app').textContent=['Follow phone','Light','Dark'][S.theme]||'';
           g('s-acc').textContent=S.textZoom+'% text';
           g('s-ver').textContent='Version '+S.version;
-          g('safe-shield').textContent=S.shield?'On':'Off';
           dots('engine',eng);dots('bar',S.barBottom?'bottom':'top');
           sw('shield',S.shield);sw('cookie',S.cookie);sw('secure',S.secure);sw('autoupdate',S.autoupdate);sw('third',S.third);
           g('theme').value=S.theme;g('rsize').value=S.readerSize;
@@ -762,6 +777,58 @@ internal object AboutPages {
         function setZoom(v){g('zlabel').textContent=v+'%';Bridge.set('textZoom',v)}
         function saveHome(){Bridge.set('homepage',g('home-in').value);load()}
         function clr(k){Bridge.clear(k);load()}
+        function cleanIt(k){Bridge.clear(k);g('sc-sum').textContent='Done.'}
+        function srow(box,key,val,cls,btn,fn){
+          var r=document.createElement('div');r.className='si';
+          var t=document.createElement('div');t.className='t';
+          var b=document.createElement('b');b.textContent=key;
+          var s=document.createElement('span');s.textContent=val;
+          t.appendChild(b);t.appendChild(s);r.appendChild(t);
+          if(cls){var p=document.createElement('span');p.className='pill '+cls;
+            p.textContent=(cls==='ok')?'OK':(cls==='bad'?'Risk':'Check');r.appendChild(p)}
+          if(btn){var bt=document.createElement('button');bt.className='ghost';
+            bt.textContent=btn;bt.onclick=fn;r.appendChild(bt)}
+          box.appendChild(r)}
+        function runCheck(){
+          var S;try{S=JSON.parse(Bridge.settings())}catch(e){return}
+          var box=g('sc-list');box.innerHTML='';
+          var items=[
+            ['Ad and tracker shield',S.shield,'On','Off - ads and trackers can load','shield'],
+            ['Hide cookie banners',S.cookie,'On','Off','cookie'],
+            ['Third-party cookies',!S.third,'Blocked','Allowed - trackers can follow you','third'],
+            ['Screen lock',S.secure,'On - screenshots are blocked','Off - screenshots are allowed','secure']];
+          var good=0,total=items.length+2;
+          for(var i=0;i<items.length;i++){(function(it){
+            if(it[1]){good++;srow(box,it[0],it[2],'ok')}
+            else srow(box,it[0],it[3],'warn','Fix',function(){Bridge.toggle(it[4]);runCheck()})})(items[i])}
+          good++;srow(box,'Only secure pages','Nirobo opens https pages only','ok');
+          var n=S.blockedHosts||0;
+          if(n>0){good++;srow(box,'Block list',n+' ad and tracker sites are blocked','ok')}
+          else srow(box,'Block list','The list is empty or still loading','warn');
+          g('sc-sum').textContent=good+' of '+total+' checks passed'}
+        function checkLink(){
+          var out=g('lk-out');out.innerHTML='';
+          var raw=g('lk').value.trim();if(!raw)return;
+          var u;
+          try{u=new URL(/^[a-z]+:/i.test(raw)?raw:'https://'+raw)}
+          catch(e){srow(out,'Link','This is not a valid link','bad');return}
+          var h=u.hostname.toLowerCase();var parts=h.split('.');
+          var issues=0;
+          srow(out,'Goes to',h,'');
+          if(u.protocol==='https:')srow(out,'Secure (https)','Yes','ok');
+          else{issues++;srow(out,'Secure (https)','No - others can see what you send','bad')}
+          if(h.replace(/[0-9.]/g,'')===''||h.indexOf(':')>=0){issues++;srow(out,'Address','A number, not a name','warn')}
+          if(u.username||u.password){issues++;srow(out,'Hidden part','Has a login part before the real site','bad')}
+          if(h.indexOf('xn--')>=0){issues++;srow(out,'Letters','Uses look-alike letters','warn')}
+          if(parts.length>4){issues++;srow(out,'Name','Very many parts in the name','warn')}
+          if((h.match(/-/g)||[]).length>=3){issues++;srow(out,'Name','Many dashes in the name','warn')}
+          var short=['bit.ly','tinyurl.com','t.co','goo.gl','ow.ly','is.gd','cutt.ly','rb.gy','shorturl.at'];
+          if(short.indexOf(h)>=0){issues++;srow(out,'Short link','Hides the real website','warn')}
+          var bad=['zip','mov','tk','ml','ga','cf','gq','click'];
+          if(bad.indexOf(parts[parts.length-1])>=0){issues++;srow(out,'Ending','Often used by scam sites','warn')}
+          if(raw.length>200){issues++;srow(out,'Length','Very long link','warn')}
+          if(Bridge.isBlocked(h)){issues++;srow(out,'Block list','This site is in the ad and tracker list','warn')}
+          srow(out,'Result',issues===0?'Nothing unusual found':(issues<3?'Be careful':'Looks risky'),issues===0?'ok':(issues<3?'warn':'bad'))}
         function sysOpen(w){Bridge.openSystem(w)}
         function checkUpd(){g('upd').textContent='Checking…';Bridge.checkUpdate();setTimeout(load,2500);setTimeout(load,7000)}
         function saveNews(){Bridge.saveNews();setTimeout(load,2500)}
@@ -1237,6 +1304,7 @@ internal class Bridge(
         o.put("autoupdate", store.autoUpdate)
         o.put("barBottom", store.barBottom)
         o.put("third", store.thirdCookies)
+        o.put("blockedHosts", act.blocklistSize())
         o.put("textZoom", store.textZoom)
         o.put("newsSavedAt", if (store.newsSavedAt == 0L) "" else
             android.text.format.DateFormat.format("d MMM, HH:mm", store.newsSavedAt).toString())
@@ -1508,11 +1576,17 @@ internal class Bridge(
     }
 
     @JavascriptInterface
+    fun isBlocked(host: String): Boolean = act.hostBlocked(host)
+
+    @JavascriptInterface
     fun clear(key: String) {
         when (key) {
             "history" -> store.clearHistory()
             "downloads" -> store.clearDownloads()
             "all" -> act.runOnUiThread { act.clearBrowsingData() }
+            "cookies" -> act.runOnUiThread { act.clearCookiesNow() }
+            "cache" -> act.runOnUiThread { act.clearCacheNow() }
+            "site" -> act.runOnUiThread { act.clearSiteDataNow() }
         }
     }
 

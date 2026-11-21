@@ -1295,7 +1295,6 @@ open class BrowserActivity : Activity() {
             item("\uD83D\uDD52", "History", "") { loadInto(t, "about:history") }
             divider()
         }
-        item("\uD83E\uDDEE", "Calculator", "") { loadInto(t, "about:calc") }
         item("\uD83D\uDCE4", "Share\u2026", "") {
             val send = Intent(Intent.ACTION_SEND)
             send.type = "text/plain"
@@ -1368,6 +1367,27 @@ open class BrowserActivity : Activity() {
 
     internal fun clearBrowsingData() {
         clearData()
+    }
+
+    internal fun blocklistSize(): Int = hosts.size
+
+    internal fun hostBlocked(host: String): Boolean = isBlocked(host)
+
+    internal fun clearCookiesNow() {
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
+        toast("Cookies cleared")
+    }
+
+    internal fun clearCacheNow() {
+        current?.web?.clearCache(true)
+        toast("Cache cleared")
+    }
+
+    internal fun clearSiteDataNow() {
+        WebStorage.getInstance().deleteAllData()
+        android.webkit.GeolocationPermissions.getInstance().clearAll()
+        toast("Site data cleared")
     }
 
     /** Opens a page of Android's own settings (default browser, notifications). */
