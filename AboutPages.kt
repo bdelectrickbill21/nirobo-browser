@@ -21,13 +21,15 @@ import java.util.concurrent.Executors
  * the phone or the network goes through [Bridge], which is the only JavaScript
  * interface exposed to these pages.
  */
+private val ENGINE_LOCK = Any()
+
 internal object AboutPages {
 
     /** Every page the address bar understands. */
     val NAMES = listOf(
         "blank", "home", "internet", "web", "phone", "bookmarks", "history",
         "downloads", "settings", "shield", "news", "version", "nirobo",
-        "update", "charge", "battery", "sandbox"
+        "update", "charge", "battery", "sandbox", "calc"
     )
 
     fun isAbout(url: String): Boolean = url.startsWith("about:")
@@ -520,6 +522,8 @@ internal object AboutPages {
         .dot{width:20px;height:20px;border-radius:50%;border:2px solid currentColor;opacity:.55;position:relative;flex:none}
         .dot.on{opacity:1}
         .dot.on:after{content:'';position:absolute;left:3px;top:3px;right:3px;bottom:3px;border-radius:50%;background:currentColor}
+        .lg{width:34px;height:34px;border-radius:9px;background:rgba(127,127,127,.2);display:flex;align-items:center;justify-content:center;font-weight:700;overflow:hidden;flex:none}
+        .lg img{width:24px;height:24px;object-fit:contain}
         .field{width:100%;font:inherit;padding:12px 14px;border-radius:12px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit;box-sizing:border-box}
         .note{font-size:13px;opacity:.7;margin:10px 6px}
         </style>
@@ -553,6 +557,17 @@ internal object AboutPages {
             <div class="si" data-g="engine" data-v="google" onclick="setEngine('google')"><div class="dot"></div><div class="t"><b>Google</b></div></div>
             <div class="si" data-g="engine" data-v="ddg" onclick="setEngine('ddg')"><div class="dot"></div><div class="t"><b>DuckDuckGo</b></div></div>
             <div class="si" data-g="engine" data-v="bing" onclick="setEngine('bing')"><div class="dot"></div><div class="t"><b>Bing</b></div></div>
+          </div>
+          <div class="sh">Your own engines</div>
+          <div class="sg" id="custom-engines"></div>
+          <div class="sh">Add a search engine</div>
+          <div style="padding:0 2px">
+            <input class="field" id="ce-name" placeholder="Name, for example Yandex" autocapitalize="words" autocomplete="off" maxlength="30">
+            <div style="height:10px"></div>
+            <input class="field" id="ce-url" placeholder="https://yandex.com/search/?text=%s" type="url" autocapitalize="off" autocomplete="off">
+            <div class="note">Put <b>%s</b> where the search words go. Open the engine in the browser, search for the word test, then copy the address and change the word test to %s.</div>
+            <button onclick="addEng()">Add engine</button>
+            <div class="note" id="ce-msg"></div>
           </div>
         </div>
 
@@ -678,8 +693,12 @@ internal object AboutPages {
             if(e[i].getAttribute('data-v')===String(val))d.classList.add('on');else d.classList.remove('on')}}
         function load(){
           var S; try{S=JSON.parse(Bridge.settings())}catch(e){return}
+          var CE=[]; try{CE=JSON.parse(Bridge.engines())}catch(e){}
           var eng=engineOf(S.searchUrl);
-          g('s-engine').textContent=NAMES[eng];
+          var ename=NAMES[eng];
+          for(var ci=0;ci<CE.length;ci++){if(CE[ci].url===S.searchUrl){eng='c:'+CE[ci].id;ename=CE[ci].name}}
+          g('s-engine').textContent=ename;
+          drawEngines(CE);
           g('s-bar').textContent=S.barBottom?'Bottom':'Top';
           g('s-priv').textContent=(S.shield?'Shield on':'Shield off')+(S.secure?' · screen locked':'');
           g('s-home').textContent=String(S.homeUrl).replace('https://','');
@@ -699,6 +718,43 @@ internal object AboutPages {
           if(u){g('upd').textContent=u.status;g('updlast').textContent=u.last}
         }
         function setEngine(k){Bridge.set('engine',k);load()}
+        function logo(e){
+          var d=document.createElement('div');d.className='lg';
+          var first=(e.name||'?').charAt(0).toUpperCase();
+          if(e.icon){var im=document.createElement('img');im.src=e.icon;
+            im.onerror=function(){d.textContent=first};d.appendChild(im)}
+          else d.textContent=first;
+          return d}
+        function drawEngines(CE){
+          var box=g('custom-engines');box.innerHTML='';
+          if(!CE.length){var em=document.createElement('div');em.className='si';
+            var et=document.createElement('div');et.className='t';
+            var eb=document.createElement('span');eb.textContent='No engine added yet';
+            et.appendChild(eb);em.appendChild(et);box.appendChild(em);return}
+          for(var i=0;i<CE.length;i++){(function(e){
+            var row=document.createElement('div');row.className='si';
+            row.setAttribute('data-g','engine');row.setAttribute('data-v','c:'+e.id);
+            var dot=document.createElement('div');dot.className='dot';row.appendChild(dot);
+            row.appendChild(logo(e));
+            var t=document.createElement('div');t.className='t';
+            var b=document.createElement('b');b.textContent=e.name;
+            var sp=document.createElement('span');
+            try{sp.textContent=new URL(e.url.replace('%s','x')).host}catch(x){sp.textContent=''}
+            t.appendChild(b);t.appendChild(sp);row.appendChild(t);
+            var del=document.createElement('div');del.className='ch';del.textContent='\u2715';
+            del.style.padding='0 4px';
+            del.onclick=function(ev){ev.stopPropagation();
+              if(confirm('Remove '+e.name+'?')){Bridge.removeEngine(e.id);load()}};
+            row.appendChild(del);
+            row.onclick=function(){Bridge.useEngine(e.id);load()};
+            box.appendChild(row)})(CE[i])}}
+        function addEng(){
+          var r=Bridge.addEngine(g('ce-name').value,g('ce-url').value);
+          var m=g('ce-msg');
+          if(r==='ok'){m.textContent='Added. Getting the logo...';
+            g('ce-name').value='';g('ce-url').value='';
+            load();setTimeout(load,2500);setTimeout(load,7000)}
+          else m.textContent=r}
         function setBar(k){Bridge.set('bar',k);load()}
         function tog(k){Bridge.toggle(k);load()}
         function setTheme(v){Bridge.set('theme',v);load()}
@@ -893,6 +949,214 @@ internal object AboutPages {
     //  build
     // =====================================================================
 
+    private fun calc(dark: Boolean): String {
+        val body = """
+        <style>
+        .tabs{display:flex;gap:8px;margin:14px 0}
+        .tabs button{flex:1;padding:10px 4px;font-size:14px}
+        .in{width:100%;font:inherit;padding:12px;border-radius:11px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit}
+        .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+        .lb{font-size:12px;opacity:.7;margin:10px 0 4px}
+        .kp{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+        .kp button{padding:16px 0;font-size:20px}
+        h3{font-size:17px;margin:0 0 4px}
+        </style>
+        <h1>Calculator</h1>
+        <p class="sub">Price, weight and money, made easy.</p>
+        <div class="tabs">
+          <button id="tb1" onclick="tab(1)">Price</button>
+          <button id="tb2" class="ghost" onclick="tab(2)">Numbers</button>
+          <button id="tb3" class="ghost" onclick="tab(3)">Compare</button>
+        </div>
+
+        <div id="t1">
+          <div class="card">
+            <h3>Product price</h3>
+            <div class="two">
+              <div><div class="lb">Price (৳)</div><input class="in" id="p-price" type="number" inputmode="decimal" oninput="calc1()"></div>
+              <div><div class="lb">per</div><select class="in u" id="p-per" data-def="kg" onchange="calc1()"></select></div>
+            </div>
+            <div class="two">
+              <div><div class="lb">I want</div><input class="in" id="p-qty" type="number" inputmode="decimal" oninput="calc1()"></div>
+              <div><div class="lb">unit</div><select class="in u" id="p-unit" data-def="g" onchange="calc1()"></select></div>
+            </div>
+            <div class="two">
+              <div><div class="lb">Discount % (optional)</div><input class="in" id="p-disc" type="number" inputmode="decimal" oninput="calc1()"></div>
+              <div><div class="lb">VAT % (optional)</div><input class="in" id="p-vat" type="number" inputmode="decimal" oninput="calc1()"></div>
+            </div>
+            <div id="p-out" style="margin-top:12px"></div>
+          </div>
+          <div class="card">
+            <h3>How much can I buy?</h3>
+            <div class="lb">My money (৳)</div>
+            <input class="in" id="b-money" type="number" inputmode="decimal" oninput="calc1()">
+            <div id="b-out" style="margin-top:12px"></div>
+            <div class="hint">It uses the price you wrote above.</div>
+          </div>
+        </div>
+
+        <div id="t2" style="display:none">
+          <div class="card">
+            <div id="k-ex" style="min-height:24px;text-align:right;opacity:.7;word-break:break-all"></div>
+            <div id="k-res" class="big" style="text-align:right;word-break:break-all">0</div>
+            <div class="kp" id="kp"></div>
+          </div>
+        </div>
+
+        <div id="t3" style="display:none">
+          <div class="card">
+            <h3>Which one is cheaper?</h3>
+            <div class="lb"><b>Product A</b></div>
+            <div class="two">
+              <div><input class="in" id="a-price" type="number" inputmode="decimal" placeholder="Price (৳)" oninput="calc3()"></div>
+              <div></div>
+            </div>
+            <div class="two" style="margin-top:8px">
+              <div><input class="in" id="a-qty" type="number" inputmode="decimal" placeholder="Amount" oninput="calc3()"></div>
+              <div><select class="in u" id="a-unit" data-def="kg" onchange="calc3()"></select></div>
+            </div>
+            <div class="lb"><b>Product B</b></div>
+            <div class="two">
+              <div><input class="in" id="b-price" type="number" inputmode="decimal" placeholder="Price (৳)" oninput="calc3()"></div>
+              <div></div>
+            </div>
+            <div class="two" style="margin-top:8px">
+              <div><input class="in" id="b-qty" type="number" inputmode="decimal" placeholder="Amount" oninput="calc3()"></div>
+              <div><select class="in u" id="b-unit" data-def="kg" onchange="calc3()"></select></div>
+            </div>
+            <div id="c-out" style="margin-top:12px"></div>
+          </div>
+        </div>
+        """
+        val script = """
+        function g(i){return document.getElementById(i)}
+        var U={kg:['w',1],g:['w',0.001],lb:['w',0.45359237],oz:['w',0.028349523125],pc:['c',1],dz:['c',12]};
+        var LBL={kg:'kg',g:'g',lb:'lb',oz:'oz',pc:'piece',dz:'dozen'};
+        function fillUnits(){
+          var s=document.querySelectorAll('select.u');
+          for(var i=0;i<s.length;i++){
+            for(var k in U){var o=document.createElement('option');o.value=k;o.textContent=LBL[k];s[i].appendChild(o)}
+            s[i].value=s[i].getAttribute('data-def')}}
+        function num(id){var v=parseFloat(g(id).value);return isNaN(v)?0:v}
+        function money(v){return '৳ '+(Math.round(v*100)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+        function qf(v){return parseFloat(v.toPrecision(6)).toLocaleString('en-US',{maximumFractionDigits:4})}
+        function rows(el,list){
+          el.innerHTML='';
+          for(var i=0;i<list.length;i++){
+            var r=document.createElement('div');r.className='row';
+            var k=document.createElement('span');k.className='k';k.textContent=list[i][0];
+            var v=document.createElement('span');v.className='v';v.textContent=list[i][1];
+            if(list[i][2])v.style.fontWeight='700';
+            r.appendChild(k);r.appendChild(v);el.appendChild(r)}}
+        function note(el,t){el.innerHTML='';var p=document.createElement('p');p.textContent=t;el.appendChild(p)}
+        function tab(n){
+          for(var i=1;i<=3;i++){
+            g('t'+i).style.display=(i===n)?'block':'none';
+            g('tb'+i).className=(i===n)?'':'ghost'}}
+
+        function calc1(){
+          var price=num('p-price'),qty=num('p-qty'),disc=num('p-disc'),vat=num('p-vat'),budget=num('b-money');
+          var pu=U[g('p-per').value],qu=U[g('p-unit').value],out=g('p-out'),bo=g('b-out');
+          if(pu[0]!==qu[0]){note(out,'Use the same kind: weight with weight, or pieces with pieces.');note(bo,'');return}
+          if(!(price>0)){note(out,'Write the price first.');note(bo,'');return}
+          var perBase=price/pu[1];
+          if(qty>0){
+            var base=perBase*qty*qu[1];
+            var after=base*(1-disc/100);
+            var total=after*(1+vat/100);
+            var list=[['Price',money(base)]];
+            if(disc>0)list.push(['Discount '+disc+'%','- '+money(base-after)]);
+            if(vat>0)list.push(['VAT '+vat+'%','+ '+money(total-after)]);
+            list.push(['You pay',money(total),1]);
+            rows(out,list)
+          }else note(out,'Write how much you want to buy.');
+          if(budget>0){
+            var bq=budget/perBase;
+            var l2=[['You can buy',qf(bq/qu[1])+' '+LBL[g('p-unit').value]]];
+            if(pu[0]==='w'){l2.push(['In kg',qf(bq)+' kg']);l2.push(['In grams',qf(bq*1000)+' g'])}
+            rows(bo,l2)
+          }else note(bo,'Write your money to see how much you can buy.')}
+
+        function calc3(){
+          var pa=num('a-price'),qa=num('a-qty'),pb=num('b-price'),qb=num('b-qty'),out=g('c-out');
+          var ua=U[g('a-unit').value],ub=U[g('b-unit').value];
+          if(ua[0]!==ub[0]){note(out,'Use the same kind of unit for both products.');return}
+          if(!(pa>0&&qa>0&&pb>0&&qb>0)){note(out,'Write the price and the amount for both.');return}
+          var A=pa/(qa*ua[1]),B=pb/(qb*ub[1]);
+          var per=ua[0]==='w'?'kg':'piece';
+          var list=[['Product A',money(A)+' per '+per],['Product B',money(B)+' per '+per]];
+          if(A===B){list.push(['Result','Same price',1])}
+          else{
+            var win=A<B?'A':'B';
+            var pct=Math.abs(A-B)/Math.max(A,B)*100;
+            list.push(['Cheaper','Product '+win+' ('+qf(pct)+'% less)',1])}
+          rows(out,list)}
+
+        var ex='';
+        function evalExpr(s){
+          s=s.replace(/×/g,'*').replace(/÷/g,'/').replace(/−/g,'-');
+          var i=0;
+          function peek(){return s.charAt(i)}
+          function pct(v){while(peek()==='%'){v=v/100;i++}return v}
+          function num_(){
+            var st=i;
+            while(/[0-9.]/.test(peek()))i++;
+            if(st===i)throw 0;
+            var v=parseFloat(s.substring(st,i));
+            if(isNaN(v))throw 0;
+            return pct(v)}
+          function factor(){
+            if(peek()==='-'){i++;return -factor()}
+            if(peek()==='+'){i++;return factor()}
+            if(peek()==='('){i++;var v=expr();if(peek()!==')')throw 0;i++;return pct(v)}
+            return num_()}
+          function term(){
+            var v=factor();
+            while(peek()==='*'||peek()==='/'){
+              var o=peek();i++;var r=factor();
+              if(o==='*')v*=r;else{if(r===0)throw 0;v/=r}}
+            return v}
+          function expr(){
+            var v=term();
+            while(peek()==='+'||peek()==='-'){
+              var o=peek();i++;
+              var st=i;var r=term();
+              if(/^[0-9.]+%+${'$'}/.test(s.substring(st,i)))r=v*r;
+              v=(o==='+')?v+r:v-r}
+            return v}
+          var v=expr();
+          if(i!==s.length)throw 0;
+          return v}
+        function safe(s){if(!s)return null;try{var v=evalExpr(s);return isFinite(v)?v:null}catch(e){return null}}
+        function fmtNum(v){return parseFloat(v.toPrecision(12)).toLocaleString('en-US',{maximumFractionDigits:10})}
+        function draw(){
+          g('k-ex').textContent=ex||' ';
+          var r=safe(ex);
+          g('k-res').textContent=(ex==='')?'0':(r===null?'...':fmtNum(r))}
+        function key(k){
+          if(k==='C')ex='';
+          else if(k==='⌫')ex=ex.slice(0,-1);
+          else if(k==='='){var r=safe(ex);if(r!==null){var t=String(parseFloat(r.toPrecision(12)));ex=(t.indexOf('e')>=0)?'':t}}
+          else if(ex.length<60)ex+=k;
+          draw()}
+        function buildKeys(){
+          var K=[['C','ghost'],['⌫','ghost'],['%','ghost'],['÷',''],
+                 ['7','ghost'],['8','ghost'],['9','ghost'],['×',''],
+                 ['4','ghost'],['5','ghost'],['6','ghost'],['−',''],
+                 ['1','ghost'],['2','ghost'],['3','ghost'],['+',''],
+                 ['(','ghost'],['0','ghost'],[')','ghost'],['.','ghost'],
+                 ['=','']];
+          var box=g('kp');
+          for(var i=0;i<K.length;i++){(function(k){
+            var b=document.createElement('button');b.textContent=k[0];b.className=k[1];
+            if(k[0]==='=')b.style.gridColumn='span 4';
+            b.onclick=function(){key(k[0])};
+            box.appendChild(b)})(K[i])}}
+        fillUnits();buildKeys();draw();calc1();calc3();
+        """
+        return page("Calculator", dark, body, script)
+    }
+
     fun build(url: String, dark: Boolean): String = when (name(url)) {
         "blank" -> blank(dark)
         "internet" -> internet(dark)
@@ -905,6 +1169,7 @@ internal object AboutPages {
         "settings" -> settings(dark)
         "shield" -> shield(dark)
         "news" -> news(dark)
+        "calc" -> calc(dark)
         "version", "nirobo" -> version(dark)
         else -> version(dark)
     }
@@ -976,6 +1241,164 @@ internal class Bridge(
         o.put("newsSavedAt", if (store.newsSavedAt == 0L) "" else
             android.text.format.DateFormat.format("d MMM, HH:mm", store.newsSavedAt).toString())
         return o.toString()
+    }
+
+    // ---- search engines the person adds ----
+
+    @JavascriptInterface
+    fun engines(): String = store.engines().toString()
+
+    /** Returns "ok", or a short message that says what is wrong. */
+    @JavascriptInterface
+    fun addEngine(name: String, template: String): String {
+        val n = name.trim().take(30)
+        var u = template.trim()
+        if (n.isEmpty()) return "Write a name first."
+        if (u.startsWith("http://")) u = "https://" + u.substring(7)
+        else if (!u.startsWith("https://")) u = "https://" + u
+        if (u.length > 300 || u.any { it.isWhitespace() }) return "That link is not valid."
+        val host: String? = try {
+            java.net.URI(u.replace("%s", "x")).host
+        } catch (e: Exception) {
+            null
+        }
+        if (host.isNullOrEmpty() || !host.contains('.')) return "That link is not valid."
+        if (!u.contains("%s") && !u.endsWith("=")) return "Put %s where the search words go."
+        val id = System.currentTimeMillis().toString()
+        synchronized(ENGINE_LOCK) {
+            val list = store.engines()
+            if (list.length() >= 10) return "You can add 10 engines at most."
+            val o = JSONObject()
+            o.put("id", id)
+            o.put("name", n)
+            o.put("url", u)
+            o.put("icon", "")
+            list.put(o)
+            store.saveEngines(list)
+        }
+        val siteHost: String = host
+        Thread {
+            val icon = fetchIcon(siteHost)
+            if (icon.isNotEmpty()) setEngineIcon(id, icon)
+        }.start()
+        return "ok"
+    }
+
+    @JavascriptInterface
+    fun useEngine(id: String) {
+        synchronized(ENGINE_LOCK) {
+            val list = store.engines()
+            for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                if (o.optString("id") == id) store.searchUrl = o.optString("url")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun removeEngine(id: String) {
+        synchronized(ENGINE_LOCK) {
+            val list = store.engines()
+            val out = JSONArray()
+            var wasUsed = false
+            for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                if (o.optString("id") == id) {
+                    if (o.optString("url") == store.searchUrl) wasUsed = true
+                } else {
+                    out.put(o)
+                }
+            }
+            store.saveEngines(out)
+            if (wasUsed) store.searchUrl = "https://nirobo.pages.dev/?q="
+        }
+    }
+
+    private fun setEngineIcon(id: String, icon: String) {
+        synchronized(ENGINE_LOCK) {
+            val list = store.engines()
+            for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                if (o.optString("id") == id) o.put("icon", icon)
+            }
+            store.saveEngines(list)
+        }
+    }
+
+    /** Reads at most [max] bytes. If the data is bigger: null (or what we have, when [failIfBig] is false). */
+    private fun readCapped(ins: java.io.InputStream, max: Int, failIfBig: Boolean): ByteArray? {
+        val buf = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(4096)
+        ins.use {
+            while (true) {
+                val n = it.read(chunk)
+                if (n < 0) break
+                buf.write(chunk, 0, n)
+                if (buf.size() > max) {
+                    return if (failIfBig) null else buf.toByteArray()
+                }
+            }
+        }
+        return buf.toByteArray()
+    }
+
+    /** Only real picture formats are accepted. Anything else is thrown away. */
+    private fun sniffImage(b: ByteArray): String? {
+        if (b.size < 12) return null
+        fun at(i: Int): Int = b[i].toInt() and 0xFF
+        return when {
+            at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 -> "image/png"
+            at(0) == 0x00 && at(1) == 0x00 && at(2) == 0x01 && at(3) == 0x00 -> "image/x-icon"
+            at(0) == 0xFF && at(1) == 0xD8 -> "image/jpeg"
+            at(0) == 0x47 && at(1) == 0x49 && at(2) == 0x46 -> "image/gif"
+            at(0) == 0x52 && at(1) == 0x49 && at(2) == 0x46 && at(3) == 0x46 &&
+                at(8) == 0x57 && at(9) == 0x45 -> "image/webp"
+            else -> null
+        }
+    }
+
+    /** Gets the website's small logo once and keeps it, so it shows offline too. */
+    private fun fetchIcon(host: String): String {
+        try {
+            val base = URL("https://" + host + "/")
+            var iconUrl = "https://" + host + "/favicon.ico"
+            // 1) ask the home page which logo it uses
+            try {
+                val c = base.openConnection() as HttpURLConnection
+                c.connectTimeout = 6000
+                c.readTimeout = 6000
+                c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 11) NiroboBrowser")
+                if (c.responseCode == 200) {
+                    val head = readCapped(c.inputStream, 200000, false)
+                    if (head != null) {
+                        val html = String(head, Charsets.UTF_8)
+                        val tag = Regex("""<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]*>""", RegexOption.IGNORE_CASE)
+                        val href = Regex("""href=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                        for (m in tag.findAll(html)) {
+                            val h = href.find(m.value)?.groupValues?.get(1) ?: continue
+                            val full = URL(base, h).toString()
+                            if (full.startsWith("https://") && !full.endsWith(".svg")) {
+                                iconUrl = full
+                                break
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // fall back to /favicon.ico
+            }
+            // 2) download it
+            val c2 = URL(iconUrl).openConnection() as HttpURLConnection
+            c2.connectTimeout = 6000
+            c2.readTimeout = 6000
+            if (c2.responseCode != 200) return ""
+            val bytes = readCapped(c2.inputStream, 60000, true) ?: return ""
+            val mime = sniffImage(bytes) ?: return ""
+            return "data:" + mime + ";base64," +
+                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        } catch (e: Exception) {
+            return ""
+        }
     }
 
     @JavascriptInterface

@@ -104,6 +104,17 @@ internal class Store(ctx: Context) {
 
     // ---------------- bookmarks ----------------
 
+    /** Search engines the person added: [{id, name, url, icon}] */
+    fun engines(): JSONArray = try {
+        JSONArray(p.getString("engines", "[]") ?: "[]")
+    } catch (e: Exception) {
+        JSONArray()
+    }
+
+    fun saveEngines(a: JSONArray) {
+        p.edit().putString("engines", a.toString()).apply()
+    }
+
     fun bookmarks(): JSONArray = try {
         JSONArray(p.getString("bookmarks", "[]") ?: "[]")
     } catch (e: Exception) {

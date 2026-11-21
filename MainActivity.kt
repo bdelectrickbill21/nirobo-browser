@@ -1130,9 +1130,16 @@ open class BrowserActivity : Activity() {
         return when {
             t.startsWith("https://") -> t
             t.startsWith("http://") -> "https://" + t.substring(7)
-            t.contains(" ") || !t.contains(".") -> store.searchUrl + URLEncoder.encode(t, "UTF-8")
+            t.contains(" ") || !t.contains(".") -> searchLink(t)
             else -> "https://$t"
         }
+    }
+
+    /** Builds the search address. A custom engine may have %s in the middle. */
+    private fun searchLink(words: String): String {
+        val q = URLEncoder.encode(words, "UTF-8")
+        val s = store.searchUrl
+        return if (s.contains("%s")) s.replace("%s", q) else s + q
     }
 
     private fun go(input: String) {
@@ -1288,6 +1295,7 @@ open class BrowserActivity : Activity() {
             item("\uD83D\uDD52", "History", "") { loadInto(t, "about:history") }
             divider()
         }
+        item("\uD83E\uDDEE", "Calculator", "") { loadInto(t, "about:calc") }
         item("\uD83D\uDCE4", "Share\u2026", "") {
             val send = Intent(Intent.ACTION_SEND)
             send.type = "text/plain"
