@@ -70,19 +70,9 @@ internal class Tab(val web: WebView) {
     @Volatile var host: String = ""
 }
 
-/**
- * Nirobo Browser.
- *
- * - Nirobo is the home page and the search engine.
- * - about: pages are built inside the app and work with no internet.
- * - Ads and trackers are blocked per site, with a switch for each.
- * - NewsHub is saved to the phone once a day and shown when there is no internet.
- */
 open class BrowserActivity : Activity() {
 
     protected open val isPrivate: Boolean get() = false
-
-    /** The sandbox is a private window that is locked down much further (see SandboxActivity). */
     protected open val isSandbox: Boolean get() = false
 
     private val homeUrl: String get() = store.homeUrl
@@ -118,10 +108,8 @@ open class BrowserActivity : Activity() {
     private lateinit var reloadBtn: TextView
     private lateinit var lockBtn: TextView
 
-    // sandbox only: scripts are off until you turn them on (never saved)
     private var scriptsOn = false
 
-    /** Where a new tab starts. */
     private val startUrl: String get() = if (isSandbox) "about:sandbox" else homeUrl
 
     private var fullView: View? = null
@@ -133,7 +121,6 @@ open class BrowserActivity : Activity() {
 
     private fun dp(n: Int): Int = (n * resources.displayMetrics.density).toInt()
 
-    /** True when the app should draw its own pages dark. */
     internal fun isDark(): Boolean {
         val t = store.theme
         if (t == 1) return false
@@ -141,8 +128,6 @@ open class BrowserActivity : Activity() {
         val mode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         return mode == Configuration.UI_MODE_NIGHT_YES
     }
-
-    // ---------- start ----------
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -172,8 +157,6 @@ open class BrowserActivity : Activity() {
 
     private fun isWebAddress(s: String?): Boolean =
         s != null && (s.startsWith("http://") || s.startsWith("https://"))
-
-    // ---------- the screen ----------
 
     private fun label(text: String, size: Float, color: Int): TextView {
         val t = TextView(this)
@@ -224,13 +207,13 @@ open class BrowserActivity : Activity() {
         addr.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) addr.post { addr.selectAll() }
         }
-        // like Chrome: a lock (or info) button on the left, reload or stop on the right
+
         lockBtn = label("\u24D8", 18f, Color.WHITE)
         lockBtn.setPadding(dp(4), dp(4), dp(10), dp(4))
         lockBtn.setOnClickListener { showSiteInfo() }
         top.addView(lockBtn, LinearLayout.LayoutParams(wrap, wrap))
         top.addView(addr, LinearLayout.LayoutParams(0, wrap, 1f))
-        // voice search: tap to speak, long-press to change the language (not in private or sandbox)
+
         if (!isPrivate && !isSandbox) {
             val mic = label("\uD83C\uDFA4", 18f, Color.WHITE)
             mic.setPadding(dp(10), dp(4), dp(2), dp(4))
@@ -243,6 +226,7 @@ open class BrowserActivity : Activity() {
             }
             top.addView(mic, LinearLayout.LayoutParams(wrap, wrap))
         }
+
         reloadBtn = label("\u21BB", 20f, Color.WHITE)
         reloadBtn.setPadding(dp(10), dp(4), dp(4), dp(4))
         reloadBtn.setOnClickListener { reloadOrStop() }
@@ -259,7 +243,6 @@ open class BrowserActivity : Activity() {
 
         holder = FrameLayout(this)
 
-        // find-in-page bar, hidden until you ask for it
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
         findBar.gravity = Gravity.CENTER_VERTICAL
@@ -369,8 +352,6 @@ open class BrowserActivity : Activity() {
         setContentView(root)
     }
 
-    // ---------- tabs ----------
-
     @SuppressLint("SetJavaScriptEnabled")
     private fun createTab(): Tab {
         val w = WebView(this)
@@ -390,18 +371,19 @@ open class BrowserActivity : Activity() {
         s.displayZoomControls = false
         s.setGeolocationEnabled(false)
         s.safeBrowsingEnabled = true
+        s.referrerPolicy = WebSettings.REFERRER_POLICY_ORIGIN_WHEN_XORIGIN
+        @Suppress("DEPRECATION")
+        s.saveFormData = false
+        @Suppress("DEPRECATION")
+        s.savePassword = false
         if (isPrivate) s.cacheMode = WebSettings.LOAD_NO_CACHE
         s.userAgentString = mobileUa
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, store.thirdCookies && !isPrivate)
 
-        // dark mode for ordinary web pages
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             s.forceDark = if (isDark()) WebSettings.FORCE_DARK_ON else WebSettings.FORCE_DARK_OFF
         }
 
-        // The Bridge is added only while an about: page is showing (see loadInto).
-        // A real website must never be able to reach it, or it could read your
-        // bookmarks and history.
         w.setOnLongClickListener { v -> onLongPress(v as WebView) }
 
         w.webViewClient = object : WebViewClient() {
@@ -413,12 +395,17 @@ open class BrowserActivity : Activity() {
                     return true
                 }
                 if (scheme == "https" || scheme == "http") {
-                    // leaving one of our own pages: take the Bridge away before the website loads
                     if (t.isAbout) {
                         t.isAbout = false
                         view.removeJavascriptInterface("Bridge")
                     }
-                    if (scheme == "https") return false
+                    if (scheme == "https") {
+                        if (isDownloadable(u.toString())) {
+                            enqueueDownload(u.toString(), mobileUa, null, null)
+                            return true
+                        }
+                        return false
+                    }
                     view.loadUrl(u.buildUpon().scheme("https").build().toString())
                     return true
                 }
@@ -442,7 +429,6 @@ open class BrowserActivity : Activity() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 if (request.isForMainFrame) return null
                 val host = request.url.host ?: return null
-                // sandbox: a page may only load files from its own site
                 if (isSandbox && !sameSite(host, t.host)) {
                     t.blocked++
                     if (t === current) runOnUiThread { shield.text = "\uD83D\uDEE1 ${t.blocked}" }
@@ -459,11 +445,9 @@ open class BrowserActivity : Activity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 t.blocked = 0
-                // password manager fills in only on secure pages, never in private or sandbox windows
                 view.importantForAutofill =
                     if (url.startsWith("https://") && !isPrivate && !isSandbox) View.IMPORTANT_FOR_AUTOFILL_YES
                     else View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-                // our own pages keep the about: name we gave them
                 if (!(t.isAbout && (url.startsWith("data:") || url == "about:blank"))) {
                     t.url = url
                     t.isAbout = AboutPages.isAbout(url)
@@ -602,11 +586,19 @@ open class BrowserActivity : Activity() {
         return t
     }
 
-    // ---------- downloads ----------
+    private fun isDownloadable(url: String): Boolean {
+        val path = url.substringBefore('#').substringBefore('?').lowercase()
+        val exts = listOf(
+            ".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".exe", ".dmg", ".iso",
+            ".mp3", ".mp4", ".m4a", ".wav", ".flac", ".mkv", ".avi", ".mov", ".webm",
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".pdf",
+            ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".txt", ".json", ".xml"
+        )
+        return exts.any { path.endsWith(it) }
+    }
 
     private var askedNotification = false
 
-    /** Starts a download with Android's DownloadManager. Returns true when it started. */
     internal fun enqueueDownload(
         url: String,
         userAgent: String?,
@@ -619,14 +611,12 @@ open class BrowserActivity : Activity() {
         }
         try {
             var name = URLUtil.guessFileName(url, contentDisposition, mimetype)
-            // keep only a plain file name: no folders, no hidden-file tricks
-            name = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trimStart('.')
+            name = name.replace(Regex("[/:*?\"<>|\u0000-\u001f]"), "_").trimStart('.')
             if (name.isEmpty()) name = "download"
             if (name.lowercase().endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
                 toast("Blocked: Nirobo Browser does not download app files (.apk)")
                 return false
             }
-            // Android 9 asks before a file is saved
             if (Build.VERSION.SDK_INT < 29 &&
                 checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
             ) {
@@ -634,7 +624,6 @@ open class BrowserActivity : Activity() {
                 toast("Allow storage, then start the download again")
                 return false
             }
-            // Android 13 and newer ask once, so the progress can show as a notification
             if (Build.VERSION.SDK_INT >= 33 && !askedNotification &&
                 checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
             ) {
@@ -659,7 +648,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    /** What the Downloads page shows: every saved download with its live state. */
     internal fun downloadsJson(): String {
         val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val saved = store.downloads()
@@ -689,7 +677,6 @@ open class BrowserActivity : Activity() {
                     }
                 }
             } catch (e: Exception) {
-                // keep "gone"
             }
             o.put("s", status)
             o.put("got", got)
@@ -714,7 +701,6 @@ open class BrowserActivity : Activity() {
                 return
             }
             val i = if (mime == "application/pdf") {
-                // PDF files open in Nirobo's own offline reader
                 Intent(this, PdfReaderActivity::class.java).setData(uri)
             } else {
                 Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
@@ -731,7 +717,6 @@ open class BrowserActivity : Activity() {
         try {
             (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(id)
         } catch (e: Exception) {
-            // already gone
         }
         store.removeDownload(id)
     }
@@ -753,10 +738,8 @@ open class BrowserActivity : Activity() {
         return t
     }
 
-    /** Loads either a real address or one of the internal about: pages. */
     internal fun loadInto(t: Tab, input: String) {
         val low = input.trim().lowercase()
-        // hidden command: "about:sandbox" or "sandbox:<address>" opens the sandbox window
         if (!isSandbox && (low == "about:sandbox" || low.startsWith("sandbox:"))) {
             val rest = if (low.startsWith("sandbox:")) input.trim().substring(8).trim() else ""
             openSandbox(if (rest.isEmpty()) null else toUrl(rest))
@@ -773,8 +756,6 @@ open class BrowserActivity : Activity() {
             t.url = shown
             t.host = ""
             t.title = shown
-            // The bridge exists only for internal pages, and is removed again
-            // before any real website is loaded.
             t.web.removeJavascriptInterface("Bridge")
             val html: String
             if (isSandbox) {
@@ -783,7 +764,6 @@ open class BrowserActivity : Activity() {
                 t.web.addJavascriptInterface(bridge, "Bridge")
                 html = AboutPages.build(shown, isDark())
             }
-            // the page name is also the history address, so back/forward and the address bar keep the right name
             t.web.loadDataWithBaseURL(shown, html, "text/html", "utf-8", shown)
             if (t === current) {
                 addr.setText(shown)
@@ -795,7 +775,6 @@ open class BrowserActivity : Activity() {
         val u = toUrl(input) ?: return
         t.isAbout = false
         t.web.removeJavascriptInterface("Bridge")
-        // tell the website: please do not track me (Global Privacy Control + Do Not Track)
         t.web.loadUrl(u, mapOf("Sec-GPC" to "1", "DNT" to "1"))
     }
 
@@ -907,8 +886,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    // ---------- find in page ----------
-
     private fun openFind() {
         findBar.visibility = View.VISIBLE
         findInput.requestFocus()
@@ -922,8 +899,6 @@ open class BrowserActivity : Activity() {
         current?.web?.clearMatches()
         hideKeyboard()
     }
-
-    // ---------- reader mode ----------
 
     private fun applyReader(t: Tab) {
         val size = store.readerSize
@@ -1002,9 +977,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    // ---------- helpers: buttons, screen lock, sandbox ----------
-
-    /** Android 13 and newer: ask once, so download progress can show as a notification. */
     private fun askNotificationsOnce() {
         if (isPrivate || Build.VERSION.SDK_INT < 33) return
         if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED) return
@@ -1023,7 +995,6 @@ open class BrowserActivity : Activity() {
         ""
     }
 
-    // endings made of two parts: "a.com.bd" and "b.com.bd" are different sites
     private val twoPartEndings = setOf(
         "com.bd", "gov.bd", "edu.bd", "org.bd", "net.bd", "ac.bd", "mil.bd", "info.bd",
         "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "co.in", "co.jp", "com.br",
@@ -1037,10 +1008,8 @@ open class BrowserActivity : Activity() {
         return if (end in twoPartEndings) p[p.size - 3] + "." + end else end
     }
 
-    /** Same site, roughly: the last two parts of the name match. */
     private fun sameSite(a: String, b: String): Boolean = b.isEmpty() || lastTwo(a) == lastTwo(b)
 
-    /** Block screen mirroring, casting, recording and screenshots. Always on in private and sandbox windows. */
     internal fun applySecure() {
         if (isPrivate || store.secureScreen) {
             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -1049,7 +1018,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    /** Lock or info symbol on the left, reload or stop on the right. */
     private fun updateChrome(t: Tab) {
         reloadBtn.text = if (t.progress in 1..99) "\u2715" else "\u21BB"
         lockBtn.text = if (t.url.startsWith("https://")) "\uD83D\uDD12" else "\u24D8"
@@ -1114,13 +1082,11 @@ open class BrowserActivity : Activity() {
             "</ul></body></html>"
     }
 
-    // ---------- links (long press) ----------
-
     private fun onLongPress(w: WebView): Boolean {
         val hit = w.hitTestResult
         val type = hit.type
         val extra = hit.extra
-        // a picture on its own
+
         if (type == WebView.HitTestResult.IMAGE_TYPE) {
             if (extra != null && extra.startsWith("https://")) {
                 showLinkMenu(null, extra)
@@ -1129,7 +1095,7 @@ open class BrowserActivity : Activity() {
             }
             return true
         }
-        // a link, or a picture that is also a link
+
         if (type == WebView.HitTestResult.SRC_ANCHOR_TYPE || type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
             val img = if (type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) extra else null
             val h = Handler(Looper.getMainLooper()) { m ->
@@ -1140,8 +1106,8 @@ open class BrowserActivity : Activity() {
             w.requestFocusNodeHref(h.obtainMessage())
             return true
         }
+
         if (type == WebView.HitTestResult.UNKNOWN_TYPE) {
-            // pressing on text selects it. Only when nothing got selected do we show the page menu.
             w.postDelayed({
                 w.evaluateJavascript("(window.getSelection()+'').length") { v ->
                     if (v == "0" && current?.web === w) showPageMenu()
@@ -1172,7 +1138,6 @@ open class BrowserActivity : Activity() {
             }
             add(if (t.reader) "Exit reading mode" else "Open in reading mode") { toggleReader() }
             if (!isSandbox && t.url.startsWith("https://")) {
-                // sends this page's address to Google Translate
                 add("Translate to English") {
                     loadInto(t, "https://translate.google.com/translate?sl=auto&tl=en&u=" + URLEncoder.encode(t.url, "UTF-8"))
                 }
@@ -1212,7 +1177,6 @@ open class BrowserActivity : Activity() {
         startActivity(Intent.createChooser(send, "Share"))
     }
 
-    /** Saves a picture. If the address has no file ending, the server is asked what kind of picture it is. */
     private fun downloadImage(url: String) {
         if (!url.startsWith("https://")) {
             toast("This picture can't be downloaded")
@@ -1235,14 +1199,12 @@ open class BrowserActivity : Activity() {
                 if (c.responseCode == 200 && ct != null && ct.startsWith("image/")) type = ct
                 c.disconnect()
             } catch (e: Exception) {
-                // keep the guess
             }
             runOnUiThread { enqueueDownload(url, null, null, type) }
         }.start()
     }
 
     private fun showLinkMenu(url: String?, image: String? = null) {
-        // only secure pictures can be saved
         val img = if (image != null && image.startsWith("https://")) image else null
         val items = ArrayList<String>()
         val acts = ArrayList<() -> Unit>()
@@ -1297,8 +1259,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    // ---------- opening pages ----------
-
     private fun toUrl(input: String): String? {
         val t = input.trim()
         if (t.isEmpty()) return null
@@ -1311,7 +1271,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    /** Builds the search address. A custom engine may have %s in the middle. */
     private fun searchLink(words: String): String {
         val q = URLEncoder.encode(words, "UTF-8")
         val s = store.searchUrl
@@ -1323,14 +1282,12 @@ open class BrowserActivity : Activity() {
         loadInto(t, input)
     }
 
-    /** Called from an about: page when the user taps a link. */
     internal fun openFromPage(url: String) {
         if (url.isEmpty()) return
         val t = current ?: return
         loadInto(t, url)
     }
 
-    /** Runs JavaScript in the page the user is looking at. */
     internal fun evalInCurrent(js: String) {
         current?.web?.evaluateJavascript(js, null)
     }
@@ -1344,8 +1301,6 @@ open class BrowserActivity : Activity() {
         imm.hideSoftInputFromWindow(addr.windowToken, 0)
         current?.web?.requestFocus()
     }
-
-    // ---------- the shield button ----------
 
     private fun showShieldMenu() {
         val t = current ?: return
@@ -1385,8 +1340,6 @@ open class BrowserActivity : Activity() {
             .show()
     }
 
-    // ---------- menu ----------
-
     private var menuPopup: PopupWindow? = null
 
     private fun showMenu() {
@@ -1399,7 +1352,6 @@ open class BrowserActivity : Activity() {
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val ref = arrayOfNulls<PopupWindow>(1)
-
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         val bg = GradientDrawable()
@@ -1408,7 +1360,6 @@ open class BrowserActivity : Activity() {
         bg.setStroke(dp(1), line)
         box.background = bg
         box.setPadding(0, dp(6), 0, dp(6))
-
         fun divider() {
             val v = View(this)
             v.setBackgroundColor(line)
@@ -1416,7 +1367,6 @@ open class BrowserActivity : Activity() {
             lp.setMargins(dp(14), dp(6), dp(14), dp(6))
             box.addView(v, lp)
         }
-
         fun item(glyph: String, name: String, trailing: String, action: () -> Unit) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
@@ -1438,7 +1388,6 @@ open class BrowserActivity : Activity() {
             box.addView(row, LinearLayout.LayoutParams(match, wrap))
         }
 
-        // top icon row: forward, bookmark, downloads, info, reload
         val icons = LinearLayout(this)
         icons.orientation = LinearLayout.HORIZONTAL
         icons.setPadding(dp(8), dp(2), dp(8), dp(2))
@@ -1461,7 +1410,6 @@ open class BrowserActivity : Activity() {
         icon("\u21BB") { reloadOrStop() }
         box.addView(icons, LinearLayout.LayoutParams(match, wrap))
         divider()
-
         item("\uFF0B", "New tab", "") { newTab(startUrl, false) }
         if (!isPrivate) item("\uD83D\uDD76", "New private tab", "") { openPrivate(null) }
         divider()
@@ -1498,7 +1446,6 @@ open class BrowserActivity : Activity() {
             ""
         ) { clearData() }
         if (!isSandbox) item("\u24D8", "About Nirobo Browser", "") { loadInto(t, "about:version") }
-
         val scroll = ScrollView(this)
         scroll.addView(box, FrameLayout.LayoutParams(match, wrap))
         val width = dp(270)
@@ -1516,7 +1463,6 @@ open class BrowserActivity : Activity() {
         pw.showAtLocation(root, Gravity.BOTTOM or Gravity.END, dp(8), lift)
     }
 
-    /** Puts the address bar on top or at the bottom (Settings, Address bar). */
     internal fun applyBarPosition() {
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1536,7 +1482,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    /** Text size of web pages (Settings, Accessibility). */
     internal fun applyTextZoom() {
         for (x in tabs) x.web.settings.textZoom = store.textZoom
     }
@@ -1547,7 +1492,6 @@ open class BrowserActivity : Activity() {
 
     internal fun blocklistSize(): Int = hosts.size
 
-    /** "on", "off" or "unsupported": is a password manager chosen in Android's settings? */
     internal fun autofillState(): String {
         return try {
             val am = getSystemService(android.view.autofill.AutofillManager::class.java)
@@ -1578,7 +1522,6 @@ open class BrowserActivity : Activity() {
         toast("Site data cleared")
     }
 
-    /** Opens a page of Android's own settings (default browser, notifications). */
     internal fun openSystemSetting(what: String) {
         try {
             val i = when (what) {
@@ -1631,8 +1574,6 @@ open class BrowserActivity : Activity() {
         s.loadWithOverviewMode = t.desktop
         if (!t.isAbout) t.web.reload()
     }
-
-    // ---------- ad and tracker blocking ----------
 
     private fun isBlocked(host: String?): Boolean {
         var h = host?.lowercase() ?: return false
@@ -1696,8 +1637,6 @@ open class BrowserActivity : Activity() {
         }.start()
     }
 
-    // ---------- the phone's own buttons ----------
-
     private fun exitFullscreen() {
         val v = fullView ?: return
         root.removeView(v)
@@ -1720,7 +1659,6 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    /** Opens Android's own voice screen. The phone asks for the microphone itself, and Nirobo never records you. */
     private fun startVoiceSearch() {
         val i = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
         i.putExtra(
@@ -1783,42 +1721,36 @@ open class BrowserActivity : Activity() {
     }
 
     companion object {
-        /**
-         * Hides cookie-consent banners and answers the common ones.
-         * Runs on every page when "Block cookie pop-ups" is on.
-         */
         private const val COOKIE_JS = """
         (function(){
-          if(window.__nirobo_cookie)return; window.__nirobo_cookie=1;
-          var sel=[
-            '#onetrust-banner-sdk','#onetrust-consent-sdk','.onetrust-pc-dark-filter',
-            '#CybotCookiebotDialog','#CybotCookiebotDialogBodyUnderlay',
-            '.cc-window','.cookie-consent','.cookie-banner','.cookie-notice',
-            '#cookie-banner','#cookie-notice','#cookieConsent','#cookie-law-info-bar',
-            '.qc-cmp2-container','#qc-cmp2-container','.fc-consent-root',
-            '#gdpr-banner','.gdpr-banner','.cmp-container',
-            '[id^="sp_message_container"]','.truste_box_overlay','#truste-consent-track',
-            '.osano-cm-window','#didomi-host','.didomi-popup-container'
-          ];
-          function kill(){
-            for(var i=0;i<sel.length;i++){
-              var els=document.querySelectorAll(sel[i]);
-              for(var j=0;j<els.length;j++){
-                var e=els[j];
-                if(e&&e.style){e.style.setProperty('display','none','important');
-                  e.style.setProperty('visibility','hidden','important')}
-              }
-            }
-            if(document.body){
-              document.body.style.setProperty('overflow','auto','important');
-              document.documentElement.style.setProperty('overflow','auto','important');
-            }
-          }
-          kill();
-          var n=0,iv=setInterval(function(){kill();if(++n>20)clearInterval(iv)},400);
-          var mo=new MutationObserver(kill);
-          try{mo.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}
-          setTimeout(function(){try{mo.disconnect()}catch(e){}},12000);
+        if(window.__nirobo_cookie)return; window.__nirobo_cookie=1;
+        var sel=['#onetrust-banner-sdk','#onetrust-consent-sdk','.onetrust-pc-dark-filter',
+        '#CybotCookiebotDialog','#CybotCookiebotDialogBodyUnderlay',
+        '.cc-window','.cookie-consent','.cookie-banner','.cookie-notice',
+        '#cookie-banner','#cookie-notice','#cookieConsent','#cookie-law-info-bar',
+        '.qc-cmp2-container','#qc-cmp2-container','.fc-consent-root',
+        '#gdpr-banner','.gdpr-banner','.cmp-container',
+        '[id^="sp_message_container"]','.truste_box_overlay','#truste-consent-track',
+        '.osano-cm-window','#didomi-host','.didomi-popup-container'];
+        function kill(){
+        for(var i=0;i<sel.length;i++){
+        var els=document.querySelectorAll(sel[i]);
+        for(var j=0;j<els.length;j++){
+        var e=els[j];
+        if(e&&e.style){e.style.setProperty('display','none','important');
+        e.style.setProperty('visibility','hidden','important')}
+        }
+        }
+        if(document.body){
+        document.body.style.setProperty('overflow','auto','important');
+        document.documentElement.style.setProperty('overflow','auto','important');
+        }
+        }
+        kill();
+        var n=0,iv=setInterval(function(){kill();if(++n>20)clearInterval(iv)},400);
+        var mo=new MutationObserver(kill);
+        try{mo.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}
+        setTimeout(function(){try{mo.disconnect()}catch(e){}},12000);
         })();
         """
     }
@@ -1830,7 +1762,6 @@ class MainActivity : BrowserActivity()
 /** The private browser: its own window, its own storage, no screenshots, erased when closed. */
 class PrivateActivity : BrowserActivity() {
     override val isPrivate: Boolean get() = true
-
     override fun onCreate(savedInstanceState: Bundle?) {
         try {
             WebView.setDataDirectorySuffix("private")
@@ -1849,7 +1780,6 @@ class PrivateActivity : BrowserActivity() {
 class SandboxActivity : BrowserActivity() {
     override val isPrivate: Boolean get() = true
     override val isSandbox: Boolean get() = true
-
     override fun onCreate(savedInstanceState: Bundle?) {
         try {
             WebView.setDataDirectorySuffix("sandbox")
