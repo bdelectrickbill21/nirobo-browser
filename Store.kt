@@ -58,6 +58,11 @@ internal class Store(ctx: Context) {
         set(v) = p.edit().putBoolean("bar_bottom", v).apply()
 
     /** Text size of web pages in percent (Accessibility). */
+    /** Language for voice search: "en-US" or "bn-BD". */
+    var voiceLang: String
+        get() = p.getString("voice_lang", "en-US") ?: "en-US"
+        set(v) = p.edit().putString("voice_lang", v).apply()
+
     var textZoom: Int
         get() = p.getInt("text_zoom", 100)
         set(v) = p.edit().putInt("text_zoom", v).apply()

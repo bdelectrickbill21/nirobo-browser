@@ -230,6 +230,19 @@ open class BrowserActivity : Activity() {
         lockBtn.setOnClickListener { showSiteInfo() }
         top.addView(lockBtn, LinearLayout.LayoutParams(wrap, wrap))
         top.addView(addr, LinearLayout.LayoutParams(0, wrap, 1f))
+        // voice search: tap to speak, long-press to change the language (not in private or sandbox)
+        if (!isPrivate && !isSandbox) {
+            val mic = label("\uD83C\uDFA4", 18f, Color.WHITE)
+            mic.setPadding(dp(10), dp(4), dp(2), dp(4))
+            mic.setOnClickListener { startVoiceSearch() }
+            mic.setOnLongClickListener {
+                val bangla = store.voiceLang != "bn-BD"
+                store.voiceLang = if (bangla) "bn-BD" else "en-US"
+                toast(if (bangla) "Voice language: Bangla" else "Voice language: English")
+                true
+            }
+            top.addView(mic, LinearLayout.LayoutParams(wrap, wrap))
+        }
         reloadBtn = label("\u21BB", 20f, Color.WHITE)
         reloadBtn.setPadding(dp(10), dp(4), dp(4), dp(4))
         reloadBtn.setOnClickListener { reloadOrStop() }
@@ -1707,7 +1720,35 @@ open class BrowserActivity : Activity() {
         }
     }
 
+    /** Opens Android's own voice screen. The phone asks for the microphone itself, and Nirobo never records you. */
+    private fun startVoiceSearch() {
+        val i = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        i.putExtra(
+            android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+        )
+        i.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, store.voiceLang)
+        i.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        i.putExtra(
+            android.speech.RecognizerIntent.EXTRA_PROMPT,
+            if (store.voiceLang == "bn-BD") "Speak to search (Bangla)" else "Speak to search"
+        )
+        try {
+            startActivityForResult(i, 7001)
+        } catch (e: Exception) {
+            toast("Voice search is not available on this phone")
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == 7001) {
+            if (resultCode == RESULT_OK && data != null) {
+                val said = data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)
+                    ?.firstOrNull()?.trim()
+                if (!said.isNullOrEmpty()) go(said)
+            }
+            return
+        }
         if (requestCode == 1) {
             fileCb?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data))
             fileCb = null
