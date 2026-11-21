@@ -200,6 +200,17 @@ internal class Store(ctx: Context) {
         p.edit().putString("downloads", a.toString()).apply()
     }
 
+    /** Email sites the person added: [{id, name, url, icon}] */
+    fun mailSites(): JSONArray = try {
+        JSONArray(p.getString("mailsites", "[]") ?: "[]")
+    } catch (e: Exception) {
+        JSONArray()
+    }
+
+    fun saveMailSites(a: JSONArray) {
+        p.edit().putString("mailsites", a.toString()).apply()
+    }
+
     fun removeDownload(id: Long) {
         val a = downloads()
         val out = JSONArray()

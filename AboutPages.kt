@@ -29,7 +29,7 @@ internal object AboutPages {
     val NAMES = listOf(
         "blank", "home", "internet", "web", "phone", "bookmarks", "history",
         "downloads", "settings", "shield", "news", "version", "nirobo",
-        "update", "charge", "battery", "sandbox", "calc"
+        "update", "charge", "battery", "sandbox", "calc", "mail"
     )
 
     fun isAbout(url: String): Boolean = url.startsWith("about:")
@@ -609,6 +609,7 @@ internal object AboutPages {
             <div class="si" onclick="show('engine')"><div class="t"><b>Search engine</b><span id="s-engine">—</span></div><div class="ch">›</div></div>
             <div class="si" onclick="show('bar')"><div class="t"><b>Address bar</b><span id="s-bar">—</span></div><div class="ch">›</div></div>
             <div class="si" onclick="show('priv')"><div class="t"><b>Privacy and security</b><span id="s-priv">—</span></div><div class="ch">›</div></div>
+            <div class="si" onclick="location.href='about:mail'"><div class="t"><b>Email and passwords</b><span>Your email sites and autofill</span></div><div class="ch">›</div></div>
             <div class="si" onclick="show('safe')"><div class="t"><b>Safety check</b><span id="s-safe">Check, clean up and test links</span></div><div class="ch">›</div></div>
             <div class="si" onclick="show('def')"><div class="t"><b>Default browser</b><span>Make Nirobo open your links</span></div><div class="ch">›</div></div>
           </div>
@@ -1298,6 +1299,112 @@ internal object AboutPages {
         return page("Calculator", dark, body, script)
     }
 
+    private fun mail(dark: Boolean): String {
+        val body = """
+        <style>
+        h3{font-size:17px;margin:22px 4px 8px}
+        .row2{display:flex;align-items:center;gap:12px;padding:13px 4px;border-top:1px solid rgba(127,127,127,.18)}
+        .row2:first-child{border-top:0}
+        .row2 .t{flex:1;min-width:0}
+        .row2 .t b{display:block;font-weight:500}
+        .row2 .t span{display:block;font-size:13px;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .lg{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;overflow:hidden;flex:none}
+        .lg img{width:26px;height:26px;object-fit:contain}
+        .in{width:100%;font:inherit;padding:12px;border-radius:11px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit;box-sizing:border-box}
+        </style>
+        <h1>Email and passwords</h1>
+        <p class="sub">Open your email in one tap.</p>
+        <div class="card" id="mail-list"></div>
+
+        <h3>Add your own email</h3>
+        <div class="card">
+          <input class="in" id="m-name" placeholder="Name, for example My company mail" maxlength="30" autocomplete="off">
+          <div style="height:10px"></div>
+          <input class="in" id="m-url" type="url" placeholder="https://mail.yourdomain.com" autocapitalize="off" autocomplete="off">
+          <p class="hint">It works with any webmail: your own domain, cPanel, Roundcube, Zoho and more.</p>
+          <button onclick="addMail()">Add email</button>
+          <p class="hint" id="m-msg"></p>
+        </div>
+
+        <h3>Stay signed in</h3>
+        <div class="card">
+          <p>Your email stays signed in on this phone until you sign out on the website or clear cookies.</p>
+          <div class="row2">
+            <div class="t"><b>Third-party cookies</b><span id="tp-state">...</span></div>
+            <button class="ghost" id="tp-btn" onclick="toggleThird()">...</button>
+          </div>
+          <p class="hint">Some sign-in pages (Google, Microsoft) need these. If sign-in fails or keeps looping, tap Allow. After you are in, you can tap Block again.</p>
+        </div>
+
+        <h3>Passwords and autofill</h3>
+        <div class="card">
+          <p>Nirobo uses your phone's password manager (Google, Samsung, Bitwarden and others). Saved passwords fill in on https pages only. Autofill is switched off in private windows and in the sandbox.</p>
+          <div class="row2">
+            <div class="t"><b>Autofill</b><span id="af-state">...</span></div>
+          </div>
+          <p><button onclick="Bridge.openSystem('autofill')">Choose password manager</button></p>
+          <p><button class="ghost" onclick="Bridge.open('https://passwords.google.com')">Open Google Password Manager</button></p>
+          <p class="hint">If the button does not show your password manager, open Android Settings and search for Autofill service.</p>
+        </div>
+        """
+        val script = """
+        function g(i){return document.getElementById(i)}
+        var P=[['Gmail','https://mail.google.com','#D93025','G'],
+               ['Outlook','https://outlook.live.com/mail/','#0A64C8','O'],
+               ['Yahoo Mail','https://mail.yahoo.com','#6001D2','Y'],
+               ['iCloud Mail','https://www.icloud.com/mail','#3A8BEA','i'],
+               ['Proton Mail','https://mail.proton.me','#6D4AFF','P'],
+               ['Zoho Mail','https://mail.zoho.com','#C8202F','Z']];
+        function hostOf(u){try{return new URL(u).host}catch(e){return ''}}
+        function badge(color,letter,icon){
+          var d=document.createElement('div');d.className='lg';
+          if(icon){
+            d.style.background='rgba(127,127,127,.2)';
+            var im=document.createElement('img');im.src=icon;
+            im.onerror=function(){d.textContent=letter};d.appendChild(im)}
+          else{d.style.background=color||'rgba(127,127,127,.4)';d.textContent=letter}
+          return d}
+        function row(box,name,sub,color,letter,icon,openFn,delFn){
+          var r=document.createElement('div');r.className='row2';
+          r.appendChild(badge(color,letter,icon));
+          var t=document.createElement('div');t.className='t';
+          var b=document.createElement('b');b.textContent=name;
+          var s=document.createElement('span');s.textContent=sub;
+          t.appendChild(b);t.appendChild(s);r.appendChild(t);
+          if(delFn){
+            var x=document.createElement('div');x.textContent='\u2715';
+            x.style.padding='6px 10px';x.style.opacity='.6';
+            x.onclick=function(ev){ev.stopPropagation();delFn()};r.appendChild(x)}
+          r.onclick=openFn;
+          box.appendChild(r)}
+        function drawMail(){
+          var box=g('mail-list');box.innerHTML='';
+          for(var i=0;i<P.length;i++){(function(p){
+            row(box,p[0],hostOf(p[1]),p[2],p[3],'',function(){Bridge.open(p[1])},null)})(P[i])}
+          var C=[];try{C=JSON.parse(Bridge.mailSites())}catch(e){}
+          for(var j=0;j<C.length;j++){(function(c){
+            row(box,c.name,hostOf(c.url),'',(c.name||'?').charAt(0).toUpperCase(),c.icon,
+              function(){Bridge.open(c.url)},
+              function(){if(confirm('Remove '+c.name+'?')){Bridge.removeMail(c.id);drawMail()}})})(C[j])}}
+        function addMail(){
+          var r=Bridge.addMail(g('m-name').value,g('m-url').value);
+          var m=g('m-msg');
+          if(r==='ok'){m.textContent='Added. Getting the logo...';
+            g('m-name').value='';g('m-url').value='';
+            drawMail();setTimeout(drawMail,2500);setTimeout(drawMail,7000)}
+          else m.textContent=r}
+        function drawState(){
+          var S;try{S=JSON.parse(Bridge.settings())}catch(e){return}
+          g('tp-state').textContent=S.third?'Allowed':'Blocked';
+          g('tp-btn').textContent=S.third?'Block':'Allow';
+          var a=Bridge.autofillState();
+          g('af-state').textContent=(a==='on')?'On':((a==='off')?'Off - choose a password manager below':'Not supported on this phone')}
+        function toggleThird(){Bridge.toggle('third');drawState()}
+        drawMail();drawState();
+        """
+        return page("Email and passwords", dark, body, script)
+    }
+
     fun build(url: String, dark: Boolean): String = when (name(url)) {
         "blank" -> blank(dark)
         "internet" -> internet(dark)
@@ -1311,6 +1418,7 @@ internal object AboutPages {
         "shield" -> shield(dark)
         "news" -> news(dark)
         "calc" -> calc(dark)
+        "mail" -> mail(dark)
         "version", "nirobo" -> version(dark)
         else -> version(dark)
     }
@@ -1651,6 +1759,73 @@ internal class Bridge(
 
     @JavascriptInterface
     fun isBlocked(host: String): Boolean = act.hostBlocked(host)
+
+    // ---- email sites ----
+
+    @JavascriptInterface
+    fun mailSites(): String = store.mailSites().toString()
+
+    @JavascriptInterface
+    fun autofillState(): String = act.autofillState()
+
+    /** Returns "ok", or a short message that says what is wrong. */
+    @JavascriptInterface
+    fun addMail(name: String, link: String): String {
+        val n = name.trim().take(30)
+        var u = link.trim()
+        if (n.isEmpty()) return "Write a name first."
+        if (u.startsWith("http://")) u = "https://" + u.substring(7)
+        else if (!u.startsWith("https://")) u = "https://" + u
+        if (u.length > 300 || u.any { it.isWhitespace() }) return "That link is not valid."
+        val host: String? = try {
+            java.net.URI(u).host
+        } catch (e: Exception) {
+            null
+        }
+        if (host.isNullOrEmpty() || !host.contains('.')) return "That link is not valid."
+        val id = System.currentTimeMillis().toString()
+        synchronized(ENGINE_LOCK) {
+            val list = store.mailSites()
+            if (list.length() >= 12) return "You can add 12 email sites at most."
+            val o = JSONObject()
+            o.put("id", id)
+            o.put("name", n)
+            o.put("url", u)
+            o.put("icon", "")
+            list.put(o)
+            store.saveMailSites(list)
+        }
+        val siteHost: String = host
+        Thread {
+            val icon = fetchIcon(siteHost)
+            if (icon.isNotEmpty()) setMailIcon(id, icon)
+        }.start()
+        return "ok"
+    }
+
+    @JavascriptInterface
+    fun removeMail(id: String) {
+        synchronized(ENGINE_LOCK) {
+            val list = store.mailSites()
+            val out = JSONArray()
+            for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                if (o.optString("id") != id) out.put(o)
+            }
+            store.saveMailSites(out)
+        }
+    }
+
+    private fun setMailIcon(id: String, icon: String) {
+        synchronized(ENGINE_LOCK) {
+            val list = store.mailSites()
+            for (i in 0 until list.length()) {
+                val o = list.optJSONObject(i) ?: continue
+                if (o.optString("id") == id) o.put("icon", icon)
+            }
+            store.saveMailSites(list)
+        }
+    }
 
     // ---- downloads ----
 

@@ -446,6 +446,10 @@ open class BrowserActivity : Activity() {
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 t.blocked = 0
+                // password manager fills in only on secure pages, never in private or sandbox windows
+                view.importantForAutofill =
+                    if (url.startsWith("https://") && !isPrivate && !isSandbox) View.IMPORTANT_FOR_AUTOFILL_YES
+                    else View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
                 // our own pages keep the about: name we gave them
                 if (!(t.isAbout && (url.startsWith("data:") || url == "about:blank"))) {
                     t.url = url
@@ -1483,6 +1487,18 @@ open class BrowserActivity : Activity() {
 
     internal fun blocklistSize(): Int = hosts.size
 
+    /** "on", "off" or "unsupported": is a password manager chosen in Android's settings? */
+    internal fun autofillState(): String {
+        return try {
+            val am = getSystemService(android.view.autofill.AutofillManager::class.java)
+            if (am == null || !am.isAutofillSupported) "unsupported"
+            else if (am.hasEnabledAutofillServices()) "on"
+            else "off"
+        } catch (e: Exception) {
+            "unsupported"
+        }
+    }
+
     internal fun hostBlocked(host: String): Boolean = isBlocked(host)
 
     internal fun clearCookiesNow() {
@@ -1506,7 +1522,7 @@ open class BrowserActivity : Activity() {
     internal fun openSystemSetting(what: String) {
         try {
             val i = when (what) {
-                "default" -> Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                "default", "autofill" -> Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
                 "notifications" -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                     .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
                 else -> return
