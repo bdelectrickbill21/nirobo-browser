@@ -65,6 +65,7 @@ internal object NewsSaver {
         val app = ctx.applicationContext
         pool.execute {
             var ok = false
+            var savedKeep: JSONArray? = null
             try {
                 val c = URL(URL_NEWS).openConnection() as HttpURLConnection
                 c.connectTimeout = 15000
@@ -91,12 +92,24 @@ internal object NewsSaver {
                             val o = items.optJSONObject(i) ?: continue
                             // only secure links are kept
                             if (!o.optString("u").startsWith("https://")) continue
+                            // the longest text the feed gives us is the description
+                            val desc = listOf("c", "content", "d", "summary", "description")
+                                .map { k -> o.optString(k) }
+                                .maxByOrNull { it.length } ?: ""
+                            var img = ""
+                            for (k in listOf("i", "img", "image", "thumb")) {
+                                val v = o.optString(k)
+                                if (v.startsWith("https://")) {
+                                    img = v
+                                    break
+                                }
+                            }
                             val slim = JSONObject()
                             slim.put("t", o.optString("t"))
                             slim.put("u", o.optString("u"))
-                            slim.put("d", o.optString("d"))
+                            slim.put("d", desc.take(6000))
                             slim.put("s", o.optString("s"))
-                            slim.put("i", o.optString("i"))
+                            slim.put("i", img)
                             keep.put(slim)
                         }
                         val out = JSONObject()
@@ -113,6 +126,7 @@ internal object NewsSaver {
                         tmp.renameTo(dest)
 
                         Store(app).newsSavedAt = System.currentTimeMillis()
+                        savedKeep = keep
                         ok = true
                     }
                 }
@@ -122,6 +136,89 @@ internal object NewsSaver {
             }
             running = false
             done(ok)
+            // pictures come after the text, so the news never waits for them
+            val k = savedKeep
+            if (ok && k != null) fetchImages(app, k)
+        }
+    }
+
+    // ---------- pictures kept for offline reading ----------
+
+    private fun imgKey(url: String): String {
+        val md = java.security.MessageDigest.getInstance("SHA-1")
+        return md.digest(url.toByteArray()).joinToString("") { b -> "%02x".format(b) }.substring(0, 20)
+    }
+
+    private fun imageMime(b: ByteArray): String? {
+        if (b.size < 12) return null
+        fun at(i: Int): Int = b[i].toInt() and 0xFF
+        return when {
+            at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 -> "image/png"
+            at(0) == 0xFF && at(1) == 0xD8 -> "image/jpeg"
+            at(0) == 0x47 && at(1) == 0x49 && at(2) == 0x46 -> "image/gif"
+            at(0) == 0x52 && at(1) == 0x49 && at(2) == 0x46 && at(3) == 0x46 &&
+                at(8) == 0x57 && at(9) == 0x45 -> "image/webp"
+            else -> null
+        }
+    }
+
+    /** Saves the pictures of the newest stories (small ones only) and forgets old ones. */
+    private fun fetchImages(ctx: Context, items: JSONArray) {
+        try {
+            val dir = File(ctx.filesDir, "news_img")
+            dir.mkdirs()
+            val want = HashSet<String>()
+            for (i in 0 until minOf(items.length(), 40)) {
+                val u = items.optJSONObject(i)?.optString("i") ?: continue
+                if (!u.startsWith("https://")) continue
+                val key = imgKey(u)
+                want.add(key)
+                val f = File(dir, key)
+                if (f.exists()) continue
+                try {
+                    val c = URL(u).openConnection() as HttpURLConnection
+                    c.connectTimeout = 8000
+                    c.readTimeout = 8000
+                    if (c.responseCode == 200) {
+                        val buf = java.io.ByteArrayOutputStream()
+                        var tooBig = false
+                        c.inputStream.use { ins ->
+                            val chunk = ByteArray(8192)
+                            while (true) {
+                                val n = ins.read(chunk)
+                                if (n < 0) break
+                                buf.write(chunk, 0, n)
+                                if (buf.size() > 160_000) {
+                                    tooBig = true
+                                    break
+                                }
+                            }
+                        }
+                        val bytes = buf.toByteArray()
+                        if (!tooBig && imageMime(bytes) != null) f.writeBytes(bytes)
+                    }
+                    c.disconnect()
+                } catch (e: Exception) {
+                    // this picture is skipped
+                }
+            }
+            dir.listFiles()?.forEach { f -> if (f.name !in want) f.delete() }
+        } catch (e: Exception) {
+            // pictures are a bonus
+        }
+    }
+
+    /** A saved picture as a data address the news page can show, or "" when there is none. */
+    fun imageDataUri(ctx: Context, url: String): String {
+        if (!url.startsWith("https://")) return ""
+        return try {
+            val f = File(File(ctx.filesDir, "news_img"), imgKey(url))
+            if (!f.exists()) return ""
+            val bytes = f.readBytes()
+            val mime = imageMime(bytes) ?: return ""
+            "data:" + mime + ";base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        } catch (e: Exception) {
+            ""
         }
     }
 

@@ -162,12 +162,31 @@ open class BrowserActivity : Activity() {
         }
         val data = intent?.dataString
         newTab(if (isWebAddress(data)) data else startUrl, false)
+        handleWidget(intent)
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         val data = intent?.dataString
         if (isWebAddress(data)) newTab(data, false)
+        handleWidget(intent)
+    }
+
+    /** A tap on one of the home screen widgets. */
+    private fun handleWidget(intent: Intent?) {
+        val what = intent?.getStringExtra("nirobo_widget") ?: return
+        intent?.removeExtra("nirobo_widget")
+        when (what) {
+            "search" -> addr.post {
+                addr.requestFocus()
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                    .showSoftInput(addr, 0)
+            }
+            "voice" -> startVoiceSearch()
+            "charge" -> current?.let { loadInto(it, "about:phone") }
+            "speed" -> current?.let { loadInto(it, "about:internet") }
+            "news" -> current?.let { loadInto(it, "about:news") }
+        }
     }
 
     private fun isWebAddress(s: String?): Boolean =
@@ -418,7 +437,17 @@ open class BrowserActivity : Activity() {
                         t.isAbout = false
                         view.removeJavascriptInterface("Bridge")
                     }
-                    if (scheme == "https") return false
+                    if (scheme == "https") {
+                        // layer 5: remove tracking parts (utm_, fbclid, gclid ...) from the link
+                        if (store.cleanLinks) {
+                            val clean = cleanTracking(u.toString())
+                            if (clean != u.toString()) {
+                                view.loadUrl(clean)
+                                return true
+                            }
+                        }
+                        return false
+                    }
                     view.loadUrl(u.buildUpon().scheme("https").build().toString())
                     return true
                 }
@@ -443,16 +472,17 @@ open class BrowserActivity : Activity() {
                 if (request.isForMainFrame) return null
                 val host = request.url.host ?: return null
                 // sandbox: a page may only load files from its own site
-                if (isSandbox && !sameSite(host, t.host)) {
-                    t.blocked++
-                    if (t === current) runOnUiThread { shield.text = "\uD83D\uDEE1 ${t.blocked}" }
-                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
-                }
+                if (isSandbox && !sameSite(host, t.host)) return blockedResponse(t)
+                // local network shield: a website may not poke at your router or other devices
+                if (store.localShield && isPrivateHost(host) && !isPrivateHost(t.host)) return blockedResponse(t)
                 if (!store.siteShield(host)) return null
-                if (isBlocked(host)) {
-                    t.blocked++
-                    if (t === current) runOnUiThread { shield.text = "\uD83D\uDEE1 ${t.blocked}" }
-                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                // layer 1: the list of ad and tracker sites
+                if (isBlocked(host)) return blockedResponse(t)
+                // layer 2: ad addresses, only for files that come from another site
+                if (store.adPatterns && !sameSite(host, t.host) &&
+                    adPattern.containsMatchIn(request.url.toString().lowercase())
+                ) {
+                    return blockedResponse(t)
                 }
                 return null
             }
@@ -478,6 +508,7 @@ open class BrowserActivity : Activity() {
 
             override fun onPageCommitVisible(view: WebView, url: String) {
                 if (t.desktop) view.evaluateJavascript(desktopViewportJs, null)
+                injectShieldScripts(view, t)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -488,6 +519,7 @@ open class BrowserActivity : Activity() {
                     updateChrome(t)
                 }
                 if (!t.isAbout) {
+                    injectShieldScripts(view, t)
                     if (store.cookieBlock) view.evaluateJavascript(COOKIE_JS, null)
                     if (t.reader) applyReader(t)
                     if (!isPrivate) store.addHistory(url, t.title)
@@ -620,10 +652,16 @@ open class BrowserActivity : Activity() {
         try {
             var name = URLUtil.guessFileName(url, contentDisposition, mimetype)
             // keep only a plain file name: no folders, no hidden-file tricks
-            name = name.replace(Regex("[/:*?\"<>|\u0000-\u001f]"), "_").trimStart('.')
+            name = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trimStart('.')
             if (name.isEmpty()) name = "download"
-            if (name.lowercase().endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
+            val lower = name.lowercase()
+            if (lower.endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
                 toast("Blocked: Nirobo Browser does not download app files (.apk)")
+                return false
+            }
+            val program = listOf(".exe", ".bat", ".cmd", ".msi", ".scr", ".jar", ".vbs", ".ps1", ".sh")
+            if (store.dangerFiles && program.any { lower.endsWith(it) }) {
+                toast("Blocked: program files can harm your devices")
                 return false
             }
             // Android 9 asks before a file is saved
@@ -831,6 +869,7 @@ open class BrowserActivity : Activity() {
         }
         updateTabCount()
         refreshSwitcher()
+        if (winMode) rebuildTabStrip()
     }
 
     private fun closeAll() {
@@ -1053,6 +1092,7 @@ open class BrowserActivity : Activity() {
     private fun updateChrome(t: Tab) {
         reloadBtn.text = if (t.progress in 1..99) "\u2715" else "\u21BB"
         lockBtn.text = if (t.url.startsWith("https://")) "\uD83D\uDD12" else "\u24D8"
+        syncWindowLayout()
     }
 
     private fun reloadOrStop() {
@@ -1399,6 +1439,7 @@ open class BrowserActivity : Activity() {
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val ref = arrayOfNulls<PopupWindow>(1)
+
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
         val bg = GradientDrawable()
@@ -1407,6 +1448,7 @@ open class BrowserActivity : Activity() {
         bg.setStroke(dp(1), line)
         box.background = bg
         box.setPadding(0, dp(6), 0, dp(6))
+
         fun divider() {
             val v = View(this)
             v.setBackgroundColor(line)
@@ -1414,6 +1456,7 @@ open class BrowserActivity : Activity() {
             lp.setMargins(dp(14), dp(6), dp(14), dp(6))
             box.addView(v, lp)
         }
+
         fun item(glyph: String, name: String, trailing: String, action: () -> Unit) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
@@ -1458,6 +1501,7 @@ open class BrowserActivity : Activity() {
         icon("\u21BB") { reloadOrStop() }
         box.addView(icons, LinearLayout.LayoutParams(match, wrap))
         divider()
+
         item("\uFF0B", "New tab", "") { newTab(startUrl, false) }
         if (!isPrivate) item("\uD83D\uDD76", "New private tab", "") { openPrivate(null) }
         divider()
@@ -1494,6 +1538,7 @@ open class BrowserActivity : Activity() {
             ""
         ) { clearData() }
         if (!isSandbox) item("\u24D8", "About Nirobo Browser", "") { loadInto(t, "about:version") }
+
         val scroll = ScrollView(this)
         scroll.addView(box, FrameLayout.LayoutParams(match, wrap))
         val width = dp(270)
@@ -1511,11 +1556,133 @@ open class BrowserActivity : Activity() {
         pw.showAtLocation(root, Gravity.BOTTOM or Gravity.END, dp(8), lift)
     }
 
+    // ---------- Windows-style desktop layout: tab strip on top, quick buttons on the right ----------
+
+    private var winMode = false
+    private var lastTabSig = ""
+    private var tabStrip: android.widget.HorizontalScrollView? = null
+    private var tabRow: LinearLayout? = null
+    private var rail: LinearLayout? = null
+    private var winBody: LinearLayout? = null
+
+    private fun ensureWindowViews() {
+        if (winBody != null) return
+        val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+        val sv = android.widget.HorizontalScrollView(this)
+        sv.isHorizontalScrollBarEnabled = false
+        sv.setBackgroundColor(Color.parseColor("#202124"))
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.BOTTOM
+        row.setPadding(dp(6), dp(6), dp(6), 0)
+        sv.addView(row, FrameLayout.LayoutParams(wrap, wrap))
+        tabStrip = sv
+        tabRow = row
+
+        val r = LinearLayout(this)
+        r.orientation = LinearLayout.VERTICAL
+        r.gravity = Gravity.CENTER_HORIZONTAL
+        r.setBackgroundColor(Color.parseColor("#F1F4F2"))
+        r.setPadding(0, dp(6), 0, dp(6))
+        fun railBtn(symbol: String, action: () -> Unit) {
+            val b = label(symbol, 20f, barColor)
+            b.gravity = Gravity.CENTER
+            b.setOnClickListener { action() }
+            r.addView(b, LinearLayout.LayoutParams(dp(52), dp(48)))
+        }
+        railBtn("\u25C0") { current?.web?.let { if (it.canGoBack()) it.goBack() } }
+        railBtn("\u25B6") { current?.web?.let { if (it.canGoForward()) it.goForward() } }
+        railBtn("\u2606") { current?.let { loadInto(it, "about:bookmarks") } }
+        railBtn("\uD83D\uDD52") { current?.let { loadInto(it, "about:history") } }
+        railBtn("\u2B07") { current?.let { loadInto(it, "about:downloads") } }
+        railBtn("\uD83D\uDEE1") { showShieldMenu() }
+        railBtn("\u2699") { current?.let { loadInto(it, "about:settings") } }
+        railBtn("\uD83D\uDCF1") { toggleDesktop() }
+        railBtn("\u22EE") { showMenu() }
+        rail = r
+
+        val body = LinearLayout(this)
+        body.orientation = LinearLayout.HORIZONTAL
+        winBody = body
+    }
+
+    private fun tabSignature(): String {
+        val sb = StringBuilder()
+        for (x in tabs) {
+            sb.append(if (x === current) "*" else "-").append(x.title).append('~').append(x.url).append('|')
+        }
+        return sb.toString()
+    }
+
+    private fun rebuildTabStrip() {
+        val row = tabRow ?: return
+        lastTabSig = tabSignature()
+        val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+        row.removeAllViews()
+        for (x in tabs) {
+            val selected = x === current
+            val chip = LinearLayout(this)
+            chip.orientation = LinearLayout.HORIZONTAL
+            chip.gravity = Gravity.CENTER_VERTICAL
+            val bg = GradientDrawable()
+            bg.setColor(Color.parseColor(if (selected) "#3C4043" else "#2B2C30"))
+            val r = dp(10).toFloat()
+            bg.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            chip.background = bg
+            chip.setPadding(dp(12), dp(8), dp(4), dp(8))
+            val name = if (x.title.isNotEmpty()) x.title else if (x.url.isNotEmpty()) x.url else "New tab"
+            val title = label(name, 13f, if (selected) Color.WHITE else Color.parseColor("#B0B3B8"))
+            title.setSingleLine(true)
+            title.ellipsize = TextUtils.TruncateAt.END
+            title.maxWidth = dp(150)
+            chip.addView(title, LinearLayout.LayoutParams(wrap, wrap))
+            val close = label("\u2715", 13f, Color.parseColor("#B0B3B8"))
+            close.setPadding(dp(8), dp(2), dp(8), dp(2))
+            close.setOnClickListener { closeTab(x) }
+            chip.addView(close, LinearLayout.LayoutParams(wrap, wrap))
+            chip.setOnClickListener { switchTo(x) }
+            val lp = LinearLayout.LayoutParams(wrap, wrap)
+            lp.rightMargin = dp(2)
+            row.addView(chip, lp)
+        }
+        val plus = label("\uFF0B", 18f, Color.parseColor("#B0B3B8"))
+        plus.setPadding(dp(12), dp(4), dp(12), dp(6))
+        plus.setOnClickListener { newTab(startUrl, false) }
+        row.addView(plus, LinearLayout.LayoutParams(wrap, wrap))
+    }
+
+    /** Switches between the phone layout and the Windows-style layout when desktop mode changes. */
+    private fun syncWindowLayout() {
+        if (!::bottomBar.isInitialized) return
+        val want = current?.desktop == true
+        if (want != winMode) {
+            winMode = want
+            applyBarPosition()
+        } else if (winMode && tabSignature() != lastTabSig) {
+            rebuildTabStrip()
+        }
+    }
+
     /** Puts the address bar on top or at the bottom (Settings, Address bar). */
     internal fun applyBarPosition() {
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
+        (holder.parent as? ViewGroup)?.removeView(holder)
         page.removeAllViews()
+        if (winMode) {
+            ensureWindowViews()
+            val body = winBody!!
+            body.removeAllViews()
+            body.addView(holder, LinearLayout.LayoutParams(0, match, 1f))
+            body.addView(rail!!, LinearLayout.LayoutParams(dp(52), match))
+            page.addView(tabStrip!!, LinearLayout.LayoutParams(match, wrap))
+            page.addView(topBar, LinearLayout.LayoutParams(match, wrap))
+            page.addView(bar, LinearLayout.LayoutParams(match, dp(3)))
+            page.addView(findBar, LinearLayout.LayoutParams(match, wrap))
+            page.addView(body, LinearLayout.LayoutParams(match, 0, 1f))
+            rebuildTabStrip()
+            return
+        }
         if (store.barBottom) {
             page.addView(bar, LinearLayout.LayoutParams(match, dp(3)))
             page.addView(holder, LinearLayout.LayoutParams(match, 0, 1f))
@@ -1625,9 +1792,61 @@ open class BrowserActivity : Activity() {
         s.useWideViewPort = true
         s.loadWithOverviewMode = t.desktop
         if (!t.isAbout) t.web.reload()
+        syncWindowLayout()
     }
 
     // ---------- ad and tracker blocking ----------
+
+    // ---------- protection layers ----------
+
+    private val adPattern = Regex("(/ads?/|/adserver|/adframe|/adview|/banners?/|pagead|adsbygoogle|doubleclick|googlesyndication|/prebid|adservice|/advert)")
+
+    private val trackParams = setOf(
+        "fbclid", "gclid", "dclid", "msclkid", "yclid", "igshid", "mc_eid", "mc_cid",
+        "_hsenc", "_hsmi", "ref_src", "twclid", "wbraid", "gbraid"
+    )
+
+    private fun blockedResponse(t: Tab): WebResourceResponse {
+        t.blocked++
+        if (t === current) runOnUiThread { shield.text = "\uD83D\uDEE1 ${t.blocked}" }
+        return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+    }
+
+    /** Addresses that only exist inside your home or on your own phone. */
+    private fun isPrivateHost(h: String): Boolean {
+        val x = h.lowercase()
+        if (x == "localhost" || x == "::1" || x.endsWith(".local") || x.endsWith(".localhost") || x.endsWith(".internal")) return true
+        val m = Regex("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\$").matchEntire(x) ?: return false
+        val a = m.groupValues[1].toInt()
+        val b = m.groupValues[2].toInt()
+        return a == 0 || a == 10 || a == 127 || (a == 169 && b == 254) ||
+            (a == 172 && b in 16..31) || (a == 192 && b == 168)
+    }
+
+    /** Takes tracking parts out of a link: utm_*, fbclid, gclid ... */
+    private fun cleanTracking(url: String): String {
+        return try {
+            val u = Uri.parse(url)
+            val names = u.queryParameterNames
+            if (names.none { it.lowercase() in trackParams || it.lowercase().startsWith("utm_") }) return url
+            val b = u.buildUpon().clearQuery()
+            for (n in names) {
+                val l = n.lowercase()
+                if (l in trackParams || l.startsWith("utm_")) continue
+                for (v in u.getQueryParameters(n)) b.appendQueryParameter(n, v)
+            }
+            b.build().toString()
+        } catch (e: Exception) {
+            url
+        }
+    }
+
+    /** Layer 3 hides ad boxes, layer 4 stops pop-ups that nobody asked for. */
+    private fun injectShieldScripts(view: WebView, t: Tab) {
+        if (t.isAbout) return
+        if (store.siteShield(t.host) && store.adHide) view.evaluateJavascript(AD_HIDE_JS, null)
+        if (store.popupBlock) view.evaluateJavascript(POPUP_JS, null)
+    }
 
     private fun isBlocked(host: String?): Boolean {
         var h = host?.lowercase() ?: return false
@@ -1782,36 +2001,66 @@ open class BrowserActivity : Activity() {
          * Hides cookie-consent banners and answers the common ones.
          * Runs on every page when "Block cookie pop-ups" is on.
          */
+        private const val AD_HIDE_JS = """
+        (function(){
+          if(window.__nirobo_adhide)return; window.__nirobo_adhide=1;
+          var css='ins.adsbygoogle,[id^="google_ads"],[id^="div-gpt-ad"],[class*="adsbygoogle"],'+
+            'iframe[src*="doubleclick"],iframe[src*="googlesyndication"],iframe[src*="adservice"],'+
+            '[data-ad-slot],[data-ad-client],[aria-label="Advertisement"],[class~="ad-banner"],'+
+            '[class~="ad-container"],[class~="ad-slot"],[class~="advert"],[class~="advertisement"],'+
+            '[id~="ad-banner"],[id~="ad-container"],.sponsored-ad,.sticky-ad,.ad-placeholder'+
+            '{display:none!important}';
+          var s=document.createElement('style');s.textContent=css;
+          (document.head||document.documentElement).appendChild(s);
+        })();
+        """
+
+        private const val POPUP_JS = """
+        (function(){
+          if(window.__nirobo_popup)return; window.__nirobo_popup=1;
+          var last=0;
+          function mark(){last=Date.now()}
+          ['touchstart','click','keydown'].forEach(function(e){document.addEventListener(e,mark,true)});
+          var real=window.open;
+          window.open=function(){
+            if(Date.now()-last<1200)return real.apply(window,arguments);
+            return null;
+          };
+        })();
+        """
+
         private const val COOKIE_JS = """
         (function(){
-        if(window.__nirobo_cookie)return; window.__nirobo_cookie=1;
-        var sel=['#onetrust-banner-sdk','#onetrust-consent-sdk','.onetrust-pc-dark-filter',
-        '#CybotCookiebotDialog','#CybotCookiebotDialogBodyUnderlay',
-        '.cc-window','.cookie-consent','.cookie-banner','.cookie-notice',
-        '#cookie-banner','#cookie-notice','#cookieConsent','#cookie-law-info-bar',
-        '.qc-cmp2-container','#qc-cmp2-container','.fc-consent-root',
-        '#gdpr-banner','.gdpr-banner','.cmp-container',
-        '[id^="sp_message_container"]','.truste_box_overlay','#truste-consent-track',
-        '.osano-cm-window','#didomi-host','.didomi-popup-container'];
-        function kill(){
-        for(var i=0;i<sel.length;i++){
-        var els=document.querySelectorAll(sel[i]);
-        for(var j=0;j<els.length;j++){
-        var e=els[j];
-        if(e&&e.style){e.style.setProperty('display','none','important');
-        e.style.setProperty('visibility','hidden','important')}
-        }
-        }
-        if(document.body){
-        document.body.style.setProperty('overflow','auto','important');
-        document.documentElement.style.setProperty('overflow','auto','important');
-        }
-        }
-        kill();
-        var n=0,iv=setInterval(function(){kill();if(++n>20)clearInterval(iv)},400);
-        var mo=new MutationObserver(kill);
-        try{mo.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}
-        setTimeout(function(){try{mo.disconnect()}catch(e){}},12000);
+          if(window.__nirobo_cookie)return; window.__nirobo_cookie=1;
+          var sel=[
+            '#onetrust-banner-sdk','#onetrust-consent-sdk','.onetrust-pc-dark-filter',
+            '#CybotCookiebotDialog','#CybotCookiebotDialogBodyUnderlay',
+            '.cc-window','.cookie-consent','.cookie-banner','.cookie-notice',
+            '#cookie-banner','#cookie-notice','#cookieConsent','#cookie-law-info-bar',
+            '.qc-cmp2-container','#qc-cmp2-container','.fc-consent-root',
+            '#gdpr-banner','.gdpr-banner','.cmp-container',
+            '[id^="sp_message_container"]','.truste_box_overlay','#truste-consent-track',
+            '.osano-cm-window','#didomi-host','.didomi-popup-container'
+          ];
+          function kill(){
+            for(var i=0;i<sel.length;i++){
+              var els=document.querySelectorAll(sel[i]);
+              for(var j=0;j<els.length;j++){
+                var e=els[j];
+                if(e&&e.style){e.style.setProperty('display','none','important');
+                  e.style.setProperty('visibility','hidden','important')}
+              }
+            }
+            if(document.body){
+              document.body.style.setProperty('overflow','auto','important');
+              document.documentElement.style.setProperty('overflow','auto','important');
+            }
+          }
+          kill();
+          var n=0,iv=setInterval(function(){kill();if(++n>20)clearInterval(iv)},400);
+          var mo=new MutationObserver(kill);
+          try{mo.observe(document.documentElement,{childList:true,subtree:true})}catch(e){}
+          setTimeout(function(){try{mo.disconnect()}catch(e){}},12000);
         })();
         """
     }
@@ -1823,6 +2072,7 @@ class MainActivity : BrowserActivity()
 /** The private browser: its own window, its own storage, no screenshots, erased when closed. */
 class PrivateActivity : BrowserActivity() {
     override val isPrivate: Boolean get() = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         try {
             WebView.setDataDirectorySuffix("private")
@@ -1841,6 +2091,7 @@ class PrivateActivity : BrowserActivity() {
 class SandboxActivity : BrowserActivity() {
     override val isPrivate: Boolean get() = true
     override val isSandbox: Boolean get() = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         try {
             WebView.setDataDirectorySuffix("sandbox")

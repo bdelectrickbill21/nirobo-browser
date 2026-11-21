@@ -72,6 +72,67 @@
             </intent-filter>
         </activity>
 
+        <!-- home screen widgets -->
+        <receiver
+            android:name=".SearchWidget"
+            android:exported="true"
+            android:label="Nirobo search">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_search" />
+        </receiver>
+        <receiver
+            android:name=".AssistantWidget"
+            android:exported="true"
+            android:label="Nirobo voice search">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_assistant" />
+        </receiver>
+        <receiver
+            android:name=".ChargeWidget"
+            android:exported="true"
+            android:label="Nirobo battery">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
+                <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
+                <action android:name="android.intent.action.BATTERY_LOW" />
+                <action android:name="android.intent.action.BATTERY_OKAY" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_charge" />
+        </receiver>
+        <receiver
+            android:name=".SpeedWidget"
+            android:exported="true"
+            android:label="Nirobo speed test">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_speed" />
+        </receiver>
+        <receiver
+            android:name=".NewsWidget"
+            android:exported="true"
+            android:label="Nirobo saved news">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_news" />
+        </receiver>
+
         <!-- the offline PDF reader (opened from the Downloads page) -->
         <activity
             android:name=".PdfReaderActivity"

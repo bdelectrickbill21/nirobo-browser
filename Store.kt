@@ -63,6 +63,39 @@ internal class Store(ctx: Context) {
         get() = p.getString("voice_lang", "en-US") ?: "en-US"
         set(v) = p.edit().putString("voice_lang", v).apply()
 
+    var adPatterns: Boolean
+        get() = p.getBoolean("ad_patterns", true)
+        set(v) = p.edit().putBoolean("ad_patterns", v).apply()
+
+    var adHide: Boolean
+        get() = p.getBoolean("ad_hide", true)
+        set(v) = p.edit().putBoolean("ad_hide", v).apply()
+
+    var popupBlock: Boolean
+        get() = p.getBoolean("popup_block", true)
+        set(v) = p.edit().putBoolean("popup_block", v).apply()
+
+    var cleanLinks: Boolean
+        get() = p.getBoolean("clean_links", true)
+        set(v) = p.edit().putBoolean("clean_links", v).apply()
+
+    var localShield: Boolean
+        get() = p.getBoolean("local_shield", true)
+        set(v) = p.edit().putBoolean("local_shield", v).apply()
+
+    var dangerFiles: Boolean
+        get() = p.getBoolean("danger_files", true)
+        set(v) = p.edit().putBoolean("danger_files", v).apply()
+
+    /** Highest and lowest battery current seen so far (mA), for the charging screen. */
+    var curMax: Int
+        get() = p.getInt("cur_max", 0)
+        set(v) = p.edit().putInt("cur_max", v).apply()
+
+    var curMin: Int
+        get() = p.getInt("cur_min", 0)
+        set(v) = p.edit().putInt("cur_min", v).apply()
+
     var textZoom: Int
         get() = p.getInt("text_zoom", 100)
         set(v) = p.edit().putInt("text_zoom", v).apply()

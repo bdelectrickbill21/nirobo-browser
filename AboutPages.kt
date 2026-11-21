@@ -29,7 +29,7 @@ internal object AboutPages {
     val NAMES = listOf(
         "blank", "home", "internet", "web", "phone", "bookmarks", "history",
         "downloads", "settings", "shield", "news", "version", "nirobo",
-        "update", "charge", "battery", "sandbox", "calc", "mail"
+        "update", "charge", "battery", "sandbox", "calc", "mail", "protect"
     )
 
     fun isAbout(url: String): Boolean = url.startsWith("about:")
@@ -308,89 +308,161 @@ internal object AboutPages {
 
     private fun phone(dark: Boolean): String {
         val body = """
-        <h1>This phone</h1>
-        <p class="sub">Battery, charging and hardware, read live from the device.</p>
+        <style>
+        .tg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0}
+        .tl{border-radius:16px;padding:12px 4px;text-align:center;border:1px solid rgba(127,127,127,.28);background:rgba(127,127,127,.08);min-width:0}
+        .tl .tv{font-size:17px;font-weight:700;margin-top:4px;word-break:break-word}
+        .tl .tn{font-size:12px;opacity:.7;margin-top:2px}
+        .tl .ts{font-size:12px;font-weight:600;margin-top:2px}
+        .tl .ti{font-size:30px;line-height:36px}
+        .cap{height:14px;border-radius:7px;display:flex;overflow:hidden;background:rgba(127,127,127,.25);margin:10px 0}
+        .cap i{display:block;height:100%}
+        .hatch{background:repeating-linear-gradient(135deg,rgba(127,127,127,.45) 0 3px,transparent 3px 6px)}
+        .chip{display:inline-block;padding:4px 12px;border-radius:14px;font-size:13px;font-weight:600}
+        .ok2{color:#1E9E63}.wa2{color:#E0A02A}.bd2{color:#E5584D}
+        </style>
+        <h1>Charge</h1>
+        <p class="sub">Battery, charging and hardware, read live from your phone.</p>
 
-        <div class="card" style="text-align:center">
-          <div class="big" id="pct">—<span class="unit">%</span></div>
-          <div class="bar" style="height:12px"><i id="fill"></i></div>
-          <div id="state" class="hint">Reading…</div>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <div><span id="pct" style="font-size:34px;font-weight:700">-</span><span id="pctd" style="font-size:16px;color:#E5584D"></span></div>
+            <div class="hint">Battery</div>
+          </div>
+          <div id="g1"></div>
+          <div style="text-align:center;margin-top:-6px"><span id="ma" style="font-size:54px;font-weight:300">-</span> <span style="font-size:20px;opacity:.7">mA</span></div>
+          <div style="text-align:center;margin:6px 0 12px"><span class="chip" id="use">...</span></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div><div style="font-weight:700" id="m1">Measuring...</div><div class="hint" id="m1s"></div></div>
+            <div><div style="font-weight:700" id="m2">...</div><div class="hint" id="m2s">Lasts about</div></div>
+          </div>
+          <div class="row" style="margin-top:12px"><span class="k">Lifetime max</span><span class="v" id="lmax">-</span></div>
+          <div class="row"><span class="k">Lifetime min</span><span class="v" id="lmin">-</span></div>
+          <p><button class="ghost" onclick="Bridge.resetLife();refresh()">Reset</button></p>
         </div>
 
-        <div class="grid">
-          <div class="tile"><div class="lbl">Charging</div>
-            <div class="num" id="chg" style="font-size:17px">—</div></div>
-          <div class="tile"><div class="lbl">Temperature</div>
-            <div class="num" id="temp" style="font-size:17px">—</div></div>
-          <div class="tile"><div class="lbl">Voltage</div>
-            <div class="num" id="volt" style="font-size:17px">—</div></div>
-          <div class="tile"><div class="lbl">Health</div>
-            <div class="num" id="health" style="font-size:17px">—</div></div>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <b style="font-size:17px">Battery capacity</b>
+            <span class="chip" id="hchip">...</span>
+          </div>
+          <div class="cap"><i id="c1" style="background:#6AA7F0;width:0"></i><i id="c2" style="background:rgba(127,127,127,.25);width:0"></i><i id="c3" class="hatch" style="width:0"></i></div>
+          <div id="capRows"></div>
+          <p class="hint">From your phone's battery data. Some phones hide a few numbers; a dash means this phone does not share it.</p>
         </div>
 
-        <h2>Battery</h2>
-        <div class="card" id="batt"></div>
-
+        <div class="tg" id="t1"></div>
         <h2>Device</h2>
-        <div class="card" id="dev"></div>
+        <div class="tg" id="t2"></div>
 
+        <h2>More about this phone</h2>
+        <div class="card" id="dev"></div>
         <h2>Storage</h2>
         <div class="card" id="disk"></div>
-
-        <p class="hint">Battery figures come from Android's own battery service. Some
-        phones report fewer values than others — a dash means the phone does not
-        expose that number.</p>
         """
         val script = """
-        function row(k,v){return '<div class="row"><span class="k">'+k+
-          '</span><span class="v">'+v+'</span></div>'}
+        function g(i){return document.getElementById(i)}
+        function row(k,v){return '<div class="row"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>'}
+        function pol(cx,cy,r,deg){var a=deg*Math.PI/180;return [cx+r*Math.cos(a),cy+r*Math.sin(a)]}
+        function arc(cx,cy,r,a0,a1){
+          var p0=pol(cx,cy,r,a0),p1=pol(cx,cy,r,a1);
+          return 'M'+p0[0].toFixed(1)+' '+p0[1].toFixed(1)+' A'+r+' '+r+' 0 0 1 '+p1[0].toFixed(1)+' '+p1[1].toFixed(1)}
+        function gauge(w,h,cx,cy,r,sw,segs,v,min,max,nw){
+          var s='<svg viewBox="0 0 '+w+' '+h+'" width="100%" style="display:block">';
+          for(var i=0;i<segs.length;i++){
+            var a0=180+(segs[i][0]-min)/(max-min)*180,a1=180+(segs[i][1]-min)/(max-min)*180;
+            s+='<path d="'+arc(cx,cy,r,a0,a1)+'" fill="none" stroke="'+segs[i][2]+'" stroke-width="'+sw+'"/>'}
+          var c=Math.max(min,Math.min(max,v)),ang=180+(c-min)/(max-min)*180,p=pol(cx,cy,r-sw/2-2,ang);
+          s+='<line x1="'+cx+'" y1="'+cy+'" x2="'+p[0].toFixed(1)+'" y2="'+p[1].toFixed(1)+'" stroke="currentColor" stroke-width="'+nw+'" stroke-linecap="round"/>';
+          s+='<circle cx="'+cx+'" cy="'+cy+'" r="'+(nw+2)+'" fill="currentColor"/></svg>';
+          return s}
+        function hours(h){
+          if(!isFinite(h)||h<=0)return '...';
+          if(h>=48)return Math.round(h/24)+' days';
+          if(h>=1)return Math.floor(h)+' h '+Math.round((h-Math.floor(h))*60)+' min';
+          return Math.round(h*60)+' min'}
+        function tileG(name,val,txt,cls,svg){
+          return '<div class="tl">'+svg+'<div class="tv">'+val+'</div><div class="tn">'+name+'</div><div class="ts '+cls+'">'+txt+'</div></div>'}
+        function tileI(name,val,icon,cls,txt){
+          return '<div class="tl"><div class="ti">'+icon+'</div><div class="tn">'+name+'</div><div class="tv">'+val+'</div>'+(txt?'<div class="ts '+cls+'">'+txt+'</div>':'')+'</div>'}
         function refresh(){
-          (function(json){
-            var r; try{r=JSON.parse(json)}catch(e){return}
-            document.getElementById('pct').innerHTML=r.level+'<span class="unit">%</span>';
-            document.getElementById('fill').style.width=r.level+'%';
-            document.getElementById('fill').style.background=
-              r.level<=15?'#C4453B':(r.level<=35?'#C98A16':'#0B5D3B');
-            document.getElementById('state').textContent=r.stateText;
-            document.getElementById('chg').textContent=r.charging?'Yes':'No';
-            document.getElementById('temp').textContent=r.tempC?r.tempC.toFixed(1)+' °C':'—';
-            document.getElementById('volt').textContent=r.voltV?r.voltV.toFixed(2)+' V':'—';
-            document.getElementById('health').textContent=r.healthText||'—';
+          var r;try{r=JSON.parse(Bridge.phoneInfo())}catch(e){return}
+          var ma=r.currentMa||0,abs=Math.abs(ma);
+          var rng=Math.max(1000,Math.ceil(abs/500)*500);
+          g('pct').textContent=r.level+'%';
+          g('pctd').textContent=r.charging?'  charging':(r.level<=15?'  low':'');
+          g('g1').innerHTML=gauge(300,175,150,155,125,26,
+            [[-rng,-rng*0.1,'#8B3A3A'],[-rng*0.1,0,'#FF4D3D'],[0,rng,'#1B6B3A']],ma,-rng,rng,5);
+          g('ma').textContent=ma;
+          var use,ucol;
+          if(r.stateText==='Full'){use='Full';ucol='#1E9E63'}
+          else if(ma>=2000){use='Fast charge';ucol='#1E9E63'}
+          else if(ma>0){use='Charging';ucol='#1E9E63'}
+          else if(abs<300){use='Light use';ucol='#1E9E63'}
+          else if(abs<800){use='Normal use';ucol='#E0A02A'}
+          else{use='Heavy use';ucol='#E5584D'}
+          g('use').textContent=use;g('use').style.color=ucol;
+          g('use').style.background='rgba(127,127,127,.18)';
+          g('m1').textContent=r.stateText;
+          g('m1s').textContent=(r.watts?r.watts.toFixed(1)+' W':'');
+          var t2='...',cap2='Lasts about';
+          if(ma<0&&r.nowMah>0&&abs>5){t2=hours(r.nowMah/abs)}
+          else if(ma>20&&r.fullMah>r.nowMah){t2=hours((r.fullMah-r.nowMah)/ma);cap2='Full in'}
+          g('m2').textContent=t2;g('m2s').textContent=cap2;
+          g('lmax').textContent=r.curMax?r.curMax+' mA':'-';
+          g('lmin').textContent=r.curMin?r.curMin+' mA':'-';
 
-            var b='';
-            b+=row('Status',r.stateText);
-            b+=row('Plugged in',r.plugText);
-            b+=row('Technology',r.tech||'—');
-            b+=row('Capacity',r.chargeCounter?r.chargeCounter+' mAh':'—');
-            b+=row('Current now',r.currentNow?r.currentNow+' mA':'—');
-            b+=row('Power',r.watts?r.watts.toFixed(2)+' W':'—');
-            b+=row('Time to full',r.timeToFull||'—');
-            b+=row('Time remaining',r.timeLeft||'—');
-            document.getElementById('batt').innerHTML=b;
+          var design=r.designMah||0,full=r.fullMah||0,now=r.nowMah||0;
+          var base=design>0?design:(full>0?full:1);
+          var lost=design>0&&full>0?Math.max(0,design-full):0;
+          g('c1').style.width=Math.min(100,now*100/base)+'%';
+          g('c2').style.width=Math.max(0,Math.min(100,(full-now)*100/base))+'%';
+          g('c3').style.width=Math.min(100,lost*100/base)+'%';
+          var hp=r.healthPct||0;
+          g('hchip').textContent=hp>0?('Health '+hp+'%'):'Health -';
+          g('hchip').style.color=hp>=80?'#1E9E63':(hp>0?'#E0A02A':'inherit');
+          g('hchip').style.background='rgba(127,127,127,.18)';
+          var c='';
+          c+=row('In the battery now',now>0?now.toLocaleString()+' mAh - '+r.level+'%':'-');
+          c+=row('Holds when full, today',full>0?full.toLocaleString()+' mAh':'-');
+          c+=row('Lost to battery wear',lost>0?lost.toLocaleString()+' mAh':'-');
+          c+=row('Design capacity (maker)',design>0?design.toLocaleString()+' mAh':'-');
+          g('capRows').innerHTML=c;
 
-            var d='';
-            d+=row('Model',r.model);
-            d+=row('Manufacturer',r.manufacturer);
-            d+=row('Android',r.android);
-            d+=row('SDK',r.sdk);
-            d+=row('CPU',r.cpu);
-            d+=row('Cores',r.cores);
-            d+=row('Screen',r.screen);
-            d+=row('Density',r.density);
-            d+=row('RAM',r.ram);
-            document.getElementById('dev').innerHTML=d;
+          var v=r.voltV||0,tc=r.tempC||0,w=r.watts||0;
+          var vseg=[[3.0,3.5,'#E5584D'],[3.5,3.7,'#E0C020'],[3.7,4.25,'#1E9E63'],[4.25,4.45,'#E0C020']];
+          var tseg=[[0,15,'#4AA8E8'],[15,38,'#1E9E63'],[38,45,'#E0A02A'],[45,60,'#E5584D']];
+          var lseg=[[0,20,'#E5584D'],[20,40,'#E08A2A'],[40,60,'#D8C21E'],[60,80,'#9BBF2C'],[80,100,'#1E9E63']];
+          var pseg=[[-8,0,'#E5584D'],[0,8,'#1E9E63']];
+          var wsig=r.charging?Math.abs(w):-Math.abs(w);
+          var h1='';
+          h1+=tileG('Voltage',v?v.toFixed(2)+' V':'-',(v>=3.5&&v<=4.45)?'Normal':'Check',(v>=3.5&&v<=4.45)?'ok2':'wa2',gauge(100,60,50,52,40,10,vseg,v,3.0,4.45,3));
+          h1+=tileG('Temperature',tc?tc.toFixed(1)+' °C':'-',tc<38?'Normal':(tc<45?'Warm':'Hot'),tc<38?'ok2':(tc<45?'wa2':'bd2'),gauge(100,60,50,52,40,10,tseg,tc,0,60,3));
+          h1+=tileG('Level',r.level+'%',r.level>=60?'Good':(r.level>=20?'Okay':'Low'),r.level>=60?'ok2':(r.level>=20?'wa2':'bd2'),gauge(100,60,50,52,40,10,lseg,r.level,0,100,3));
+          h1+=tileG('Power',(wsig>=0?'':'-')+Math.abs(w).toFixed(2)+' W',use,ucol==='#1E9E63'?'ok2':(ucol==='#E0A02A'?'wa2':'bd2'),gauge(100,60,50,52,40,10,pseg,wsig,-8,8,3));
+          h1+=tileI('Status',r.stateText,'\uD83D\uDD0B','','');
+          h1+=tileI('Plugged',r.plugText==='Not plugged in'?'On battery':r.plugText,'\uD83D\uDD0C','','');
+          h1+=tileI('Health',hp>0?hp+'%':(r.healthText||'-'),'\u2764\uFE0F',hp>=80||hp===0?'ok2':'wa2',hp>0?(hp>=80?'Good':'Worn'):'');
+          h1+=tileI('Technology',r.tech||'-','\uD83D\uDCA1','','');
+          h1+=tileI('Charge cycles',(r.cycles>=0)?r.cycles:'-','\uD83D\uDD04','','');
+          g('t1').innerHTML=h1;
+          var h2='';
+          h2+=tileI('Android',r.android,'\uD83E\uDD16','','');
+          h2+=tileI('Maker',r.manufacturer,'\uD83C\uDFED','','');
+          h2+=tileI('Model',r.model.replace(r.manufacturer+' ',''),'\uD83D\uDCF1','','');
+          g('t2').innerHTML=h2;
 
-            var s='';
-            s+=row('Total',r.diskTotal);
-            s+=row('Free',r.diskFree);
-            s+=row('Used',r.diskUsed);
-            document.getElementById('disk').innerHTML=s;
-          })(Bridge.phoneInfo());
-        }
+          var d='';
+          d+=row('SDK',r.sdk);d+=row('CPU',r.cpu);d+=row('Cores',r.cores);
+          d+=row('Screen',r.screen);d+=row('Density',r.density);d+=row('RAM',r.ram);
+          g('dev').innerHTML=d;
+          var s='';
+          s+=row('Total',r.diskTotal);s+=row('Free',r.diskFree);s+=row('Used',r.diskUsed);
+          g('disk').innerHTML=s}
         refresh();
-        setInterval(refresh,5000);
+        setInterval(refresh,2000);
         """
-        return page("This phone", dark, body, script)
+        return page("Charge", dark, body, script)
     }
 
     // =====================================================================
@@ -672,6 +744,9 @@ internal object AboutPages {
           <div class="back" onclick="show('home')">←  Safety check</div>
           <div class="sg">
             <div class="si"><div class="t"><b>Run safety check</b><span id="sc-sum">Tap Check to test your settings</span></div><button onclick="runCheck()">Check</button></div>
+          </div>
+          <div class="sg">
+            <div class="si" onclick="location.href='about:protect'"><div class="t"><b>Protection layers</b><span>5 ad blockers and 7 firewall protections</span></div><div class="ch">›</div></div>
           </div>
           <div class="sg" id="sc-list"></div>
 
@@ -966,13 +1041,21 @@ internal object AboutPages {
 
     private fun news(dark: Boolean): String {
         val body = """
+        <style>
+        .ncard{padding:14px;margin-bottom:14px;overflow:hidden}
+        .nimg{display:none;margin:-14px -14px 12px;background:rgba(127,127,127,.15)}
+        .nimg img{width:100%;display:block;max-height:230px;object-fit:cover}
+        .nt{font-size:18px;font-weight:700;line-height:1.3;margin-bottom:4px}
+        .nm{font-size:13px;opacity:.65;margin-bottom:8px}
+        .nd{font-size:15px;line-height:1.5;white-space:pre-wrap;word-break:break-word;margin-bottom:12px}
+        </style>
         <h1>Saved news</h1>
-        <p class="sub" id="sub">The copy Nirobo keeps on this phone.</p>
-        <div id="out"><div class="empty">Loading…</div></div>
+        <p class="sub" id="sub">The copy Nirobo keeps on this phone. It works with no internet.</p>
+        <div id="out"><div class="empty">Loading...</div></div>
         """
         val script = """
-        function esc(s){return String(s).replace(/[&<>"]/g,function(c){
-          return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+        function esc(s){return String(s).replace(/[&<>\"]/g,function(c){
+          return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]})}
         function ago(ts){
           if(!ts)return 'never';
           var d=new Date(ts),diff=(new Date()-d)/1000;
@@ -981,6 +1064,15 @@ internal object AboutPages {
           if(diff<86400)return Math.floor(diff/3600)+' h ago';
           return Math.floor(diff/86400)+' d ago';
         }
+        function open_(u){Bridge.open(decodeURIComponent(u))}
+        var items=[],q=[];
+        function nextImg(){
+          if(!q.length)return;
+          var i=q.shift();
+          var u='';try{u=Bridge.newsImage(items[i].i)}catch(e){}
+          var el=document.getElementById('ni-'+i);
+          if(u&&el){var im=document.createElement('img');im.src=u;el.appendChild(im);el.style.display='block'}
+          setTimeout(nextImg,25)}
         (function(json){
           var r; try{r=JSON.parse(json)}catch(e){
             document.getElementById('out').innerHTML='<div class="empty">No saved copy.</div>';return}
@@ -989,19 +1081,23 @@ internal object AboutPages {
               '<div class="empty">No saved copy yet.<br>Connect to the internet once and it saves itself.</div>';
             return;
           }
+          items=r.items;
           document.getElementById('sub').textContent=
-            r.items.length+' stories · saved '+ago(r.savedAt);
-          var h='<div class="card">';
-          for(var i=0;i<r.items.length;i++){
-            var x=r.items[i];
-            h+='<div class="item" onclick="open_(\''+encq(x.u)+'\')">'+
-               '<div class="t">'+esc(x.t)+'</div>'+
-               '<div class="u">'+esc(x.s||'')+(x.d?' · '+esc(x.d.substring(0,80)):'')+'</div></div>';
+            items.length+' stories - saved '+ago(r.savedAt);
+          var h='';
+          for(var i=0;i<items.length;i++){
+            var x=items[i];
+            h+='<div class="card ncard">'+
+               (x.i?'<div class="nimg" id="ni-'+i+'"></div>':'')+
+               '<div class="nt">'+esc(x.t)+'</div>'+
+               '<div class="nm">'+esc(x.s||'')+'</div>'+
+               (x.d?'<div class="nd">'+esc(x.d)+'</div>':'')+
+               '<button onclick="open_(\''+encq(x.u)+'\')">Read full story</button></div>';
+            if(x.i)q.push(i);
           }
-          h+='</div>';
           document.getElementById('out').innerHTML=h;
+          nextImg();
         })(Bridge.savedNews());
-        function open_(u){Bridge.open(decodeURIComponent(u))}
         """
         return page("Saved news", dark, body, script)
     }
@@ -1405,6 +1501,64 @@ internal object AboutPages {
         return page("Email and passwords", dark, body, script)
     }
 
+    private fun protect(dark: Boolean): String {
+        val body = """
+        <style>
+        .row2{display:flex;align-items:center;gap:12px;padding:13px 4px;border-top:1px solid rgba(127,127,127,.18)}
+        .row2:first-child{border-top:0}
+        .row2 .t{flex:1;min-width:0}
+        .row2 .t b{display:block;font-weight:500}
+        .row2 .t span{display:block;font-size:13px;opacity:.7}
+        .pill2{padding:6px 14px;border-radius:14px;font-size:13px;font-weight:600;background:rgba(127,127,127,.2)}
+        h3{font-size:17px;margin:22px 4px 8px}
+        </style>
+        <h1>Protection layers</h1>
+        <p class="sub" id="sum">...</p>
+        <h3>5 ad blockers</h3>
+        <div class="card" id="ads"></div>
+        <h3>7 firewall protections</h3>
+        <div class="card" id="fw"></div>
+        <p class="hint">These work inside the browser. No app can be a full phone firewall, but these stop the most common tricks. If a website breaks, switch one layer off and try again.</p>
+        """
+        val script = """
+        function g(i){return document.getElementById(i)}
+        function addRow(box,name,desc,on,key,always){
+          var r=document.createElement('div');r.className='row2';
+          var t=document.createElement('div');t.className='t';
+          var b=document.createElement('b');b.textContent=name;
+          var s=document.createElement('span');s.textContent=desc;
+          t.appendChild(b);t.appendChild(s);r.appendChild(t);
+          if(always){
+            var p=document.createElement('span');p.className='pill2';p.style.color='#1E9E63';p.textContent='Always on';r.appendChild(p)}
+          else{
+            var bt=document.createElement('button');bt.textContent=on?'On':'Off';
+            if(!on)bt.className='ghost';
+            bt.style.padding='8px 18px';
+            bt.onclick=function(){Bridge.toggle(key);draw()};r.appendChild(bt)}
+          box.appendChild(r);
+          return on||always}
+        function draw(){
+          var S;try{S=JSON.parse(Bridge.settings())}catch(e){return}
+          var a=g('ads'),f=g('fw');a.innerHTML='';f.innerHTML='';
+          var n=0;
+          if(addRow(a,'1. Ad and tracker sites',(S.blockedHosts||0)+' known ad and tracker sites are blocked',S.shield,'shield',false))n++;
+          if(addRow(a,'2. Ad addresses','Blocks files from other sites whose address looks like an ad',S.adPatterns,'adpat',false))n++;
+          if(addRow(a,'3. Hide ad boxes','Hides empty ad boxes and banners on the page',S.adHide,'adhide',false))n++;
+          if(addRow(a,'4. Pop-up blocker','Stops pop-ups and tabs that open by themselves',S.popupBlock,'popup',false))n++;
+          if(addRow(a,'5. Clean links','Removes tracking parts from links (utm, fbclid, gclid)',S.cleanLinks,'cleanlinks',false))n++;
+          if(addRow(f,'1. Secure pages only','Only https pages open',true,'',true))n++;
+          if(addRow(f,'2. Mixed content blocked','A secure page cannot load insecure files',true,'',true))n++;
+          if(addRow(f,'3. Safe Browsing','Warns about dangerous and fake websites',true,'',true))n++;
+          if(addRow(f,'4. Third-party cookies blocked','Trackers cannot follow you between sites',!S.third,'third',false))n++;
+          if(addRow(f,'5. Local network shield','Websites cannot reach your router or other devices',S.localShield,'localnet',false))n++;
+          if(addRow(f,'6. Program file blocker','Blocks .exe, .bat, .jar and other program files',S.dangerFiles,'dangerfile',false))n++;
+          if(addRow(f,'7. Permission lock','Websites cannot use your camera, microphone or location',true,'',true))n++;
+          g('sum').textContent=n+' of 12 protections are on'}
+        draw();
+        """
+        return page("Protection layers", dark, body, script)
+    }
+
     fun build(url: String, dark: Boolean): String = when (name(url)) {
         "blank" -> blank(dark)
         "internet" -> internet(dark)
@@ -1419,6 +1573,7 @@ internal object AboutPages {
         "news" -> news(dark)
         "calc" -> calc(dark)
         "mail" -> mail(dark)
+        "protect" -> protect(dark)
         "version", "nirobo" -> version(dark)
         else -> version(dark)
     }
@@ -1487,6 +1642,12 @@ internal class Bridge(
         o.put("barBottom", store.barBottom)
         o.put("third", store.thirdCookies)
         o.put("blockedHosts", act.blocklistSize())
+        o.put("adPatterns", store.adPatterns)
+        o.put("adHide", store.adHide)
+        o.put("popupBlock", store.popupBlock)
+        o.put("cleanLinks", store.cleanLinks)
+        o.put("localShield", store.localShield)
+        o.put("dangerFiles", store.dangerFiles)
         o.put("textZoom", store.textZoom)
         o.put("newsSavedAt", if (store.newsSavedAt == 0L) "" else
             android.text.format.DateFormat.format("d MMM, HH:mm", store.newsSavedAt).toString())
@@ -1694,6 +1855,12 @@ internal class Bridge(
         when (key) {
             "shield" -> store.shieldEnabled = !store.shieldEnabled
             "cookie" -> store.cookieBlock = !store.cookieBlock
+            "adpat" -> store.adPatterns = !store.adPatterns
+            "adhide" -> store.adHide = !store.adHide
+            "popup" -> store.popupBlock = !store.popupBlock
+            "cleanlinks" -> store.cleanLinks = !store.cleanLinks
+            "localnet" -> store.localShield = !store.localShield
+            "dangerfile" -> store.dangerFiles = !store.dangerFiles
             "autoupdate" -> store.autoUpdate = !store.autoUpdate
             "third" -> {
                 store.thirdCookies = !store.thirdCookies
@@ -1827,6 +1994,17 @@ internal class Bridge(
         }
     }
 
+    // ---- saved news pictures ----
+
+    @JavascriptInterface
+    fun newsImage(url: String): String = NewsSaver.imageDataUri(act, url)
+
+    @JavascriptInterface
+    fun resetLife() {
+        store.curMax = 0
+        store.curMin = 0
+    }
+
     // ---- downloads ----
 
     @JavascriptInterface
@@ -1946,6 +2124,29 @@ internal class Bridge(
                 (current / 1_000_000.0) * (volt / 1000.0) else 0.0
             o.put("watts", if (watts > 0) watts else 0.0)
 
+            // extra numbers for the charging screen
+            var ma = if (current != Int.MIN_VALUE) current else 0
+            if (Math.abs(ma) > 20000) ma /= 1000 // most phones give microamps, a few give milliamps
+            ma = if (charging && status != BatteryManager.BATTERY_STATUS_FULL) Math.abs(ma) else -Math.abs(ma)
+            if (status == BatteryManager.BATTERY_STATUS_FULL) ma = 0
+            o.put("currentMa", ma)
+            val design = designCapacityMah()
+            val nowMah = if (counter > 0) counter / 1000.0 else 0.0
+            val fullMah = if (nowMah > 0 && level in 1..100) nowMah / (level / 100.0) else 0.0
+            o.put("nowMah", Math.round(nowMah).toInt())
+            o.put("fullMah", Math.round(fullMah).toInt())
+            o.put("designMah", design)
+            o.put("healthPct", if (design > 0 && fullMah > 0) minOf(100, Math.round(fullMah * 100.0 / design).toInt()) else 0)
+            val cyc = i?.getIntExtra("android.os.extra.CYCLE_COUNT", -1) ?: -1
+            o.put("cycles", if (cyc >= 0) cyc else readSysInt("cycle_count"))
+            // remember the highest and lowest current seen so far
+            if (ma != 0) {
+                if (store.curMax == 0 || Math.abs(ma) > Math.abs(store.curMax)) store.curMax = ma
+                if (store.curMin == 0 || Math.abs(ma) < Math.abs(store.curMin)) store.curMin = ma
+            }
+            o.put("curMax", store.curMax)
+            o.put("curMin", store.curMin)
+
             // Android only exposes these two on API 28+
             val full = bm.computeChargeTimeRemaining()
             o.put("timeToFull", if (full > 0) fmt(full) else "—")
@@ -1973,6 +2174,26 @@ internal class Bridge(
             o.put("error", e.message ?: "unknown")
         }
         return o.toString()
+    }
+
+    /** The battery size the maker built it for. Not every phone shares it, then this is 0. */
+    private fun designCapacityMah(): Int {
+        return try {
+            val c = Class.forName("com.android.internal.os.PowerProfile")
+            val pp = c.getConstructor(Context::class.java).newInstance(act)
+            val v = c.getMethod("getBatteryCapacity").invoke(pp) as Double
+            if (v > 500) v.toInt() else 0
+        } catch (e: Throwable) {
+            0
+        }
+    }
+
+    private fun readSysInt(name: String): Int {
+        return try {
+            java.io.File("/sys/class/power_supply/battery/" + name).readText().trim().toInt()
+        } catch (e: Throwable) {
+            -1
+        }
     }
 
     private fun fmt(ms: Long): String {
