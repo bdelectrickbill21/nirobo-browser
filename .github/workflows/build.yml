@@ -34,11 +34,15 @@ jobs:
           mkdir -p app/src/main/java/org/nirobo/browser
           mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/mipmap-xxxhdpi
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
           cp app-build.gradle.kts app/build.gradle.kts
           cp AndroidManifest.xml app/src/main/AndroidManifest.xml
           cp *.kt app/src/main/java/org/nirobo/browser/
           cp blocklist.txt app/src/main/assets/blocklist.txt
           cp ic_launcher.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          cp ic_launcher_foreground.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+          cp ic_launcher_background.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_background.png
+          cp ic_launcher_adaptive.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           # the app learns where to look for updates: this very repo
           echo "${{ github.repository }}" > app/src/main/assets/update_repo.txt
 
