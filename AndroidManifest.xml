@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- download progress and battery reminders show as notifications (Android 13 and newer ask once) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- only Android 9 needs to ask before saving a download -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <!-- Without this, Android 11 and newer hides "Search", "Translate" and "Share" from the
          text-selection menu, and the browser cannot see which apps can open a link. -->
@@ -69,6 +71,11 @@
                 <data android:scheme="https" />
             </intent-filter>
         </activity>
+
+        <!-- the offline PDF reader (opened from the Downloads page) -->
+        <activity
+            android:name=".PdfReaderActivity"
+            android:exported="false" />
 
         <!-- the private browser: a separate process, so it has its own storage and is erased when closed -->
         <activity

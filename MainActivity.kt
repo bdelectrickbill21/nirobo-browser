@@ -580,38 +580,150 @@ open class BrowserActivity : Activity() {
                 toast("Downloads are blocked in the sandbox")
                 return@setDownloadListener
             }
-            if (!url.startsWith("https://")) {
-                toast("Blocked: downloads must use a secure (https) link")
-                return@setDownloadListener
-            }
-            try {
-                var name = URLUtil.guessFileName(url, contentDisposition, mimetype)
-                // keep only a plain file name: no folders, no hidden-file tricks
-                name = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trimStart('.')
-                if (name.isEmpty()) name = "download"
-                if (name.lowercase().endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
-                    toast("Blocked: Nirobo Browser does not download app files (.apk)")
-                    return@setDownloadListener
-                }
-                if (Build.VERSION.SDK_INT < 29) {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                } else {
-                    val req = DownloadManager.Request(Uri.parse(url))
-                    req.setMimeType(mimetype)
-                    req.addRequestHeader("User-Agent", userAgent)
-                    val cookie = CookieManager.getInstance().getCookie(url)
-                    if (cookie != null) req.addRequestHeader("Cookie", cookie)
-                    req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-                    val id = (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-                    if (!isPrivate) store.addDownload(id, name, url)
-                    Toast.makeText(this@BrowserActivity, "Downloading $name", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this@BrowserActivity, "Can't download this file", Toast.LENGTH_SHORT).show()
-            }
+            enqueueDownload(url, userAgent, contentDisposition, mimetype)
         }
         return t
+    }
+
+    // ---------- downloads ----------
+
+    private var askedNotification = false
+
+    /** Starts a download with Android's DownloadManager. Returns true when it started. */
+    internal fun enqueueDownload(
+        url: String,
+        userAgent: String?,
+        contentDisposition: String?,
+        mimetype: String?
+    ): Boolean {
+        if (!url.startsWith("https://")) {
+            toast("Blocked: downloads must use a secure (https) link")
+            return false
+        }
+        try {
+            var name = URLUtil.guessFileName(url, contentDisposition, mimetype)
+            // keep only a plain file name: no folders, no hidden-file tricks
+            name = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trimStart('.')
+            if (name.isEmpty()) name = "download"
+            if (name.lowercase().endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
+                toast("Blocked: Nirobo Browser does not download app files (.apk)")
+                return false
+            }
+            // Android 9 asks before a file is saved
+            if (Build.VERSION.SDK_INT < 29 &&
+                checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 702)
+                toast("Allow storage, then start the download again")
+                return false
+            }
+            // Android 13 and newer ask once, so the progress can show as a notification
+            if (Build.VERSION.SDK_INT >= 33 && !askedNotification &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                askedNotification = true
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 701)
+            }
+            val ua = userAgent ?: (if (mobileUa.isNotEmpty()) mobileUa else "Mozilla/5.0 (Linux; Android) NiroboBrowser")
+            val req = DownloadManager.Request(Uri.parse(url))
+            if (!mimetype.isNullOrEmpty()) req.setMimeType(mimetype)
+            req.addRequestHeader("User-Agent", ua)
+            val cookie = CookieManager.getInstance().getCookie(url)
+            if (cookie != null) req.addRequestHeader("Cookie", cookie)
+            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
+            val id = (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+            if (!isPrivate) store.addDownload(id, name, url)
+            toast("Downloading $name")
+            return true
+        } catch (e: Exception) {
+            toast("Can't download this file")
+            return false
+        }
+    }
+
+    /** What the Downloads page shows: every saved download with its live state. */
+    internal fun downloadsJson(): String {
+        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val saved = store.downloads()
+        val out = org.json.JSONArray()
+        for (i in saved.length() - 1 downTo 0) {
+            val s = saved.optJSONObject(i) ?: continue
+            val id = s.optLong("id", -1L)
+            val o = org.json.JSONObject()
+            o.put("id", id.toString())
+            o.put("n", s.optString("n"))
+            o.put("u", s.optString("u"))
+            var status = "gone"
+            var got = 0L
+            var total = 0L
+            try {
+                dm.query(DownloadManager.Query().setFilterById(id))?.use { c ->
+                    if (c.moveToFirst()) {
+                        got = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                        total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                        status = when (c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
+                            DownloadManager.STATUS_SUCCESSFUL -> "done"
+                            DownloadManager.STATUS_FAILED -> "failed"
+                            DownloadManager.STATUS_PAUSED -> "paused"
+                            DownloadManager.STATUS_PENDING -> "waiting"
+                            else -> "running"
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // keep "gone"
+            }
+            o.put("s", status)
+            o.put("got", got)
+            o.put("total", total)
+            out.put(o)
+        }
+        return out.toString()
+    }
+
+    internal fun openDownload(idText: String) {
+        val id = idText.toLongOrNull() ?: return
+        try {
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val uri = dm.getUriForDownloadedFile(id)
+            if (uri == null) {
+                toast("The file is not there anymore")
+                return
+            }
+            val mime = dm.getMimeTypeForDownloadedFile(id) ?: "*/*"
+            if (mime == "application/vnd.android.package-archive") {
+                toast("App files are not opened from here")
+                return
+            }
+            val i = if (mime == "application/pdf") {
+                // PDF files open in Nirobo's own offline reader
+                Intent(this, PdfReaderActivity::class.java).setData(uri)
+            } else {
+                Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+            }
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(i)
+        } catch (e: Exception) {
+            toast("No app on your phone can open this file")
+        }
+    }
+
+    internal fun deleteDownload(idText: String) {
+        val id = idText.toLongOrNull() ?: return
+        try {
+            (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(id)
+        } catch (e: Exception) {
+            // already gone
+        }
+        store.removeDownload(id)
+    }
+
+    internal fun retryDownload(idText: String) {
+        val id = idText.toLongOrNull() ?: return
+        val url = store.downloadUrl(id)
+        deleteDownload(idText)
+        if (url.isNotEmpty()) enqueueDownload(url, null, null, null)
     }
 
     private fun newTab(input: String?, background: Boolean): Tab {

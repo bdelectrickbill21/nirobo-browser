@@ -200,6 +200,25 @@ internal class Store(ctx: Context) {
         p.edit().putString("downloads", a.toString()).apply()
     }
 
+    fun removeDownload(id: Long) {
+        val a = downloads()
+        val out = JSONArray()
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: continue
+            if (o.optLong("id", -1L) != id) out.put(o)
+        }
+        p.edit().putString("downloads", out.toString()).apply()
+    }
+
+    fun downloadUrl(id: Long): String {
+        val a = downloads()
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: continue
+            if (o.optLong("id", -1L) == id) return o.optString("u")
+        }
+        return ""
+    }
+
     fun clearDownloads() {
         p.edit().putString("downloads", "[]").apply()
     }

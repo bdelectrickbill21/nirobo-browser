@@ -473,30 +473,104 @@ internal object AboutPages {
 
     private fun downloads(dark: Boolean): String {
         val body = """
+        <style>
+        .pbar{height:6px;border-radius:3px;background:rgba(127,127,127,.25);overflow:hidden;margin:8px 0}
+        .pbar i{display:block;height:100%;width:0;background:#1E9E63}
+        .in{width:100%;font:inherit;padding:12px;border-radius:11px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit;box-sizing:border-box}
+        </style>
         <h1>Downloads</h1>
         <p class="sub">Files this browser has downloaded.</p>
+        <div class="card">
+          <input class="in" id="dl-url" type="url" placeholder="Paste a link to download (https)" autocapitalize="off" autocomplete="off">
+          <div style="height:10px"></div>
+          <button onclick="startDl()">Download</button>
+          <p class="hint" id="dl-msg"></p>
+        </div>
         <p><button class="ghost" onclick="clearAll()">Clear list</button></p>
         <div class="card" id="list"></div>
-        <p class="hint">Files are saved to your phone's Downloads folder.</p>
+        <p class="hint">Files are saved to your phone's Downloads folder. PDF files open in Nirobo's own offline reader.</p>
         """
         val script = """
-        function esc(s){return String(s).replace(/[&<>"]/g,function(c){
-          return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+        function g(i){return document.getElementById(i)}
+        function fmt(b){
+          if(!b||b<0)return '';
+          var u=['B','KB','MB','GB'],i=0;
+          while(b>=1024&&i<3){b/=1024;i++}
+          return (i?b.toFixed(1):Math.round(b))+' '+u[i]}
+        function icon(n){
+          var e=(n.split('.').pop()||'').toLowerCase();
+          if(e==='pdf')return '\uD83D\uDCD5';
+          if(['jpg','jpeg','png','gif','webp','bmp'].indexOf(e)>=0)return '\uD83D\uDDBC';
+          if(['mp4','mkv','webm','3gp','avi','mov'].indexOf(e)>=0)return '\uD83C\uDFAC';
+          if(['mp3','m4a','wav','ogg','aac','flac'].indexOf(e)>=0)return '\uD83C\uDFB5';
+          if(['zip','rar','7z','tar','gz'].indexOf(e)>=0)return '\uD83D\uDDDC';
+          if(['doc','docx','txt','odt','rtf'].indexOf(e)>=0)return '\uD83D\uDCDD';
+          if(['xls','xlsx','csv','ods'].indexOf(e)>=0)return '\uD83D\uDCCA';
+          return '\uD83D\uDCC1'}
+        function pct(d){return d.total>0?Math.min(100,Math.round(d.got*100/d.total)):0}
+        function statusText(d){
+          if(d.s==='done')return 'Done'+(d.total>0?' - '+fmt(d.total):'');
+          if(d.s==='failed')return 'Failed. Check your connection, then tap Retry.';
+          if(d.s==='gone')return 'The file was removed';
+          var t=(d.s==='waiting')?'Waiting...':((d.s==='paused')?'Paused':'Downloading');
+          if(d.total>0)t+=' '+pct(d)+'% - '+fmt(d.got)+' of '+fmt(d.total);
+          else if(d.got>0)t+=' - '+fmt(d.got);
+          return t}
+        function mkBtn(label,ghost,fn){
+          var b=document.createElement('button');
+          b.textContent=label;if(ghost)b.className='ghost';
+          b.style.padding='8px 16px';b.style.marginRight='8px';b.style.marginTop='6px';
+          b.onclick=fn;return b}
+        var lastKey='';
         function draw(){
-          (function(json){
-            var a; try{a=JSON.parse(json)}catch(e){a=[]}
-            var el=document.getElementById('list');
-            if(!a.length){el.innerHTML='<div class="empty">No downloads yet.</div>';return}
-            var h='';
+          var a;try{a=JSON.parse(Bridge.downloadsLive())}catch(e){a=[]}
+          var key=a.map(function(d){return d.id+d.s}).join('|');
+          var el=g('list');
+          if(key===lastKey&&a.length){
             for(var i=0;i<a.length;i++){
-              h+='<div class="item"><div class="t">'+esc(a[i].n)+'</div>'+
-                 '<div class="u">'+esc(a[i].u)+'</div></div>';
-            }
-            el.innerHTML=h;
-          })(Bridge.downloads());
-        }
-        function clearAll(){Bridge.clearDownloads();draw()}
-        draw();
+              var st=g('st-'+a[i].id),pb=g('pb-'+a[i].id);
+              if(st)st.textContent=statusText(a[i]);
+              if(pb)pb.style.width=pct(a[i])+'%'}
+            return}
+          lastKey=key;
+          el.innerHTML='';
+          if(!a.length){
+            var em=document.createElement('div');em.className='empty';
+            em.textContent='No downloads yet.';el.appendChild(em);return}
+          for(var i=0;i<a.length;i++){(function(d){
+            var row=document.createElement('div');row.className='item';
+            var top=document.createElement('div');
+            top.style.display='flex';top.style.gap='12px';top.style.alignItems='center';
+            var ic=document.createElement('div');ic.style.fontSize='26px';ic.textContent=icon(d.n);
+            var tt=document.createElement('div');tt.style.flex='1';tt.style.minWidth='0';
+            var nm=document.createElement('div');nm.className='t';nm.style.wordBreak='break-all';nm.textContent=d.n;
+            var st=document.createElement('div');st.className='u';st.id='st-'+d.id;st.textContent=statusText(d);
+            tt.appendChild(nm);tt.appendChild(st);top.appendChild(ic);top.appendChild(tt);row.appendChild(top);
+            if(d.s==='running'||d.s==='waiting'||d.s==='paused'){
+              var bar=document.createElement('div');bar.className='pbar';
+              var fill=document.createElement('i');fill.id='pb-'+d.id;fill.style.width=pct(d)+'%';
+              bar.appendChild(fill);row.appendChild(bar)}
+            var bx=document.createElement('div');
+            if(d.s==='done'){
+              bx.appendChild(mkBtn('Open',false,function(){Bridge.openDownload(d.id)}));
+              bx.appendChild(mkBtn('Delete',true,function(){del(d.id)}))}
+            else if(d.s==='failed'){
+              bx.appendChild(mkBtn('Retry',false,function(){Bridge.retryDownload(d.id);again()}));
+              bx.appendChild(mkBtn('Delete',true,function(){del(d.id)}))}
+            else if(d.s==='gone'){
+              bx.appendChild(mkBtn('Remove from list',true,function(){del(d.id)}))}
+            else{
+              bx.appendChild(mkBtn('Cancel',true,function(){del(d.id)}))}
+            row.appendChild(bx);el.appendChild(row)})(a[i])}}
+        function again(){lastKey='';setTimeout(draw,700)}
+        function del(id){Bridge.deleteDownload(id);again()}
+        function startDl(){
+          var r=Bridge.downloadLink(g('dl-url').value);
+          var m=g('dl-msg');
+          if(r==='ok'){m.textContent='Started. You can watch it below.';g('dl-url').value='';again()}
+          else m.textContent=r}
+        function clearAll(){Bridge.clearDownloads();again()}
+        draw();setInterval(draw,1500);
         """
         return page("Downloads", dark, body, script)
     }
@@ -1577,6 +1651,38 @@ internal class Bridge(
 
     @JavascriptInterface
     fun isBlocked(host: String): Boolean = act.hostBlocked(host)
+
+    // ---- downloads ----
+
+    @JavascriptInterface
+    fun downloadsLive(): String = act.downloadsJson()
+
+    @JavascriptInterface
+    fun openDownload(id: String) {
+        act.runOnUiThread { act.openDownload(id) }
+    }
+
+    @JavascriptInterface
+    fun deleteDownload(id: String) {
+        act.runOnUiThread { act.deleteDownload(id) }
+    }
+
+    @JavascriptInterface
+    fun retryDownload(id: String) {
+        act.runOnUiThread { act.retryDownload(id) }
+    }
+
+    /** Returns "ok", or a short message that says what is wrong. */
+    @JavascriptInterface
+    fun downloadLink(url: String): String {
+        var u = url.trim()
+        if (u.isEmpty()) return "Paste a link first."
+        if (u.startsWith("http://")) return "Only secure (https) links can be downloaded."
+        if (!u.startsWith("https://")) u = "https://" + u
+        if (u.length > 2000 || u.any { it.isWhitespace() }) return "That link is not valid."
+        act.runOnUiThread { act.enqueueDownload(u, null, null, null) }
+        return "ok"
+    }
 
     @JavascriptInterface
     fun clear(key: String) {
