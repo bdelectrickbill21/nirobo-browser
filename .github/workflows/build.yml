@@ -43,6 +43,11 @@ jobs:
           cp ic_launcher_foreground.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
           cp ic_launcher_background.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_background.png
           cp ic_launcher_adaptive.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          # widget files: layout__x.xml becomes res/layout/x.xml, and so on
+          mkdir -p app/src/main/res/layout app/src/main/res/xml app/src/main/res/drawable
+          for f in layout__*.xml; do if [ -e "$f" ]; then cp "$f" "app/src/main/res/layout/${f#layout__}"; fi; done
+          for f in xml__*.xml; do if [ -e "$f" ]; then cp "$f" "app/src/main/res/xml/${f#xml__}"; fi; done
+          for f in drawable__*.xml; do if [ -e "$f" ]; then cp "$f" "app/src/main/res/drawable/${f#drawable__}"; fi; done
           # the app learns where to look for updates: this very repo
           echo "${{ github.repository }}" > app/src/main/assets/update_repo.txt
 
