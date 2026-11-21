@@ -1104,11 +1104,24 @@ open class BrowserActivity : Activity() {
     // ---------- links (long press) ----------
 
     private fun onLongPress(w: WebView): Boolean {
-        val type = w.hitTestResult.type
+        val hit = w.hitTestResult
+        val type = hit.type
+        val extra = hit.extra
+        // a picture on its own
+        if (type == WebView.HitTestResult.IMAGE_TYPE) {
+            if (extra != null && extra.startsWith("https://")) {
+                showLinkMenu(null, extra)
+            } else {
+                toast("This picture can't be saved")
+            }
+            return true
+        }
+        // a link, or a picture that is also a link
         if (type == WebView.HitTestResult.SRC_ANCHOR_TYPE || type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
+            val img = if (type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) extra else null
             val h = Handler(Looper.getMainLooper()) { m ->
                 val u = m.data.getString("url")
-                if (u != null) showLinkMenu(u)
+                if (u != null) showLinkMenu(u, img)
                 true
             }
             w.requestFocusNodeHref(h.obtainMessage())
@@ -1173,41 +1186,75 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    private fun showLinkMenu(url: String) {
-        val inNew = "Open in new tab"
-        val inBack = "Open in background tab"
-        val inPriv = "Open in private tab"
-        val copy = "Copy link"
-        val share = "Share link"
-        val inSand = "Open in sandbox"
-        val items = ArrayList<String>()
-        items.add(inNew)
-        items.add(inBack)
-        if (!isPrivate) items.add(inPriv)
-        if (!isSandbox) items.add(inSand)
-        items.add(copy)
-        items.add(share)
-        AlertDialog.Builder(this)
-            .setTitle(if (url.length > 60) url.substring(0, 60) + "..." else url)
-            .setItems(items.toTypedArray()) { _, which ->
-                when (items[which]) {
-                    inNew -> newTab(url, false)
-                    inBack -> newTab(url, true)
-                    inPriv -> openPrivate(url)
-                    inSand -> openSandbox(url)
-                    copy -> {
-                        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("link", url))
-                        Toast.makeText(this, "Link copied", Toast.LENGTH_SHORT).show()
-                    }
-                    share -> {
-                        val send = Intent(Intent.ACTION_SEND)
-                        send.type = "text/plain"
-                        send.putExtra(Intent.EXTRA_TEXT, url)
-                        startActivity(Intent.createChooser(send, "Share"))
-                    }
-                }
+    private fun copyText(label: String, text: String, message: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText(label, text))
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun shareText(text: String) {
+        val send = Intent(Intent.ACTION_SEND)
+        send.type = "text/plain"
+        send.putExtra(Intent.EXTRA_TEXT, text)
+        startActivity(Intent.createChooser(send, "Share"))
+    }
+
+    /** Saves a picture. If the address has no file ending, the server is asked what kind of picture it is. */
+    private fun downloadImage(url: String) {
+        if (!url.startsWith("https://")) {
+            toast("This picture can't be downloaded")
+            return
+        }
+        val path = url.substringBefore('#').substringBefore('?').lowercase()
+        val known = listOf(".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp").any { path.endsWith(it) }
+        if (known) {
+            enqueueDownload(url, null, null, null)
+            return
+        }
+        Thread {
+            var type = "image/jpeg"
+            try {
+                val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "HEAD"
+                c.connectTimeout = 6000
+                c.readTimeout = 6000
+                val ct = c.contentType?.substringBefore(';')?.trim()?.lowercase()
+                if (c.responseCode == 200 && ct != null && ct.startsWith("image/")) type = ct
+                c.disconnect()
+            } catch (e: Exception) {
+                // keep the guess
             }
+            runOnUiThread { enqueueDownload(url, null, null, type) }
+        }.start()
+    }
+
+    private fun showLinkMenu(url: String?, image: String? = null) {
+        // only secure pictures can be saved
+        val img = if (image != null && image.startsWith("https://")) image else null
+        val items = ArrayList<String>()
+        val acts = ArrayList<() -> Unit>()
+        fun add(name: String, action: () -> Unit) {
+            items.add(name)
+            acts.add(action)
+        }
+        if (img != null) {
+            if (!isSandbox) add("Download image") { downloadImage(img) }
+            add("Open image in new tab") { newTab(img, false) }
+            add("Copy image link") { copyText("image link", img, "Image link copied") }
+        }
+        if (url != null) {
+            add("Open in new tab") { newTab(url, false) }
+            add("Open in background tab") { newTab(url, true) }
+            if (!isPrivate) add("Open in private tab") { openPrivate(url) }
+            if (!isSandbox) add("Open in sandbox") { openSandbox(url) }
+            if (!isSandbox) add("Download link") { enqueueDownload(url, null, null, null) }
+            add("Copy link") { copyText("link", url, "Link copied") }
+            add("Share link") { shareText(url) }
+        }
+        val shown = url ?: img ?: return
+        AlertDialog.Builder(this)
+            .setTitle(if (shown.length > 60) shown.substring(0, 60) + "..." else shown)
+            .setItems(items.toTypedArray()) { _, which -> acts[which]() }
             .show()
     }
 
