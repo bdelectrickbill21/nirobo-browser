@@ -1,0 +1,530 @@
+package org.nirobo.browser
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.ContentValues
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.IBinder
+import android.provider.MediaStore
+import android.webkit.URLUtil
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+
+/** One download. */
+internal class DlItem(val id: Long, val url: String, var name: String) {
+    @Volatile var state = "waiting" // waiting, running, done, failed
+    @Volatile var got = 0L
+    @Volatile var total = 0L
+    @Volatile var error = ""
+    @Volatile var uri = ""
+    @Volatile var mime = ""
+    @Volatile var cancel = false
+    var ua = ""
+    var cookie: String? = null
+    var mimeHint: String? = null
+    var disposition: String? = null
+    var blockPrograms = false
+}
+
+private class Canceled : Exception()
+
+/**
+ * Nirobo's own downloader. It does not use the phone's download manager:
+ * it connects, follows redirects (https only), shows progress on the Downloads page
+ * and saves the file into the phone's Downloads folder.
+ */
+internal object Downloader {
+    const val CHANNEL = "nirobo_downloads"
+    const val NOTE_ID = 7001
+    private const val MAX_FILE = 4L * 1024 * 1024 * 1024 // 4 GB
+
+    val items = CopyOnWriteArrayList<DlItem>()
+    private val pool = Executors.newFixedThreadPool(2)
+    private val seq = AtomicLong(System.currentTimeMillis())
+    @Volatile private var loaded = false
+    @Volatile var service: DownloadService? = null
+    private var lastNote = 0L
+
+    /** The private window turns this off, so nothing about its downloads is written down. */
+    @Volatile var persist = true
+
+    private val program = listOf(".exe", ".bat", ".cmd", ".msi", ".scr", ".jar", ".vbs", ".ps1", ".sh")
+
+    // ---------- list of downloads, kept between runs ----------
+
+    private fun load(ctx: Context) {
+        if (loaded) return
+        synchronized(this) {
+            if (loaded) return
+            loaded = true
+            if (!persist) return
+            try {
+                val a = JSONArray(Store(ctx).getString("dl2", "[]"))
+                for (i in 0 until a.length()) {
+                    val o = a.optJSONObject(i) ?: continue
+                    val d = DlItem(o.optLong("id"), o.optString("u"), o.optString("n"))
+                    d.state = o.optString("s", "failed")
+                    d.got = o.optLong("got")
+                    d.total = o.optLong("total")
+                    d.error = o.optString("err")
+                    d.uri = o.optString("uri")
+                    d.mime = o.optString("m")
+                    if (d.state == "running" || d.state == "waiting") {
+                        d.state = "failed"
+                        d.error = "Stopped when the app closed. Tap Retry."
+                    }
+                    items.add(d)
+                }
+            } catch (e: Exception) {
+                // start with an empty list
+            }
+        }
+    }
+
+    private fun save(ctx: Context) {
+        if (!persist) return
+        try {
+            val a = JSONArray()
+            for (d in items) a.put(toJson(d))
+            Store(ctx).putString("dl2", a.toString())
+        } catch (e: Exception) {
+            // not saved this time
+        }
+    }
+
+    private fun toJson(d: DlItem): JSONObject {
+        val o = JSONObject()
+        o.put("id", d.id)
+        o.put("n", d.name)
+        o.put("u", d.url)
+        o.put("s", d.state)
+        o.put("got", d.got)
+        o.put("total", d.total)
+        o.put("err", d.error)
+        o.put("uri", d.uri)
+        o.put("m", d.mime)
+        return o
+    }
+
+    /** What the Downloads page shows, newest first. */
+    fun json(ctx: Context): String {
+        load(ctx.applicationContext)
+        val a = JSONArray()
+        for (i in items.size - 1 downTo 0) {
+            val d = items[i]
+            val o = toJson(d)
+            o.put("id", d.id.toString())
+            o.remove("uri")
+            a.put(o)
+        }
+        return a.toString()
+    }
+
+    private fun trim(ctx: Context) {
+        while (items.size > 100) {
+            val old = items.firstOrNull { x -> x.state != "running" && x.state != "waiting" } ?: break
+            items.remove(old)
+        }
+        save(ctx)
+    }
+
+    // ---------- starting, stopping ----------
+
+    fun start(
+        ctx: Context,
+        url: String,
+        name: String,
+        mime: String?,
+        disposition: String?,
+        ua: String,
+        cookie: String?,
+        useService: Boolean,
+        blockPrograms: Boolean
+    ): DlItem {
+        val app = ctx.applicationContext
+        load(app)
+        val item = DlItem(seq.incrementAndGet(), url, name)
+        item.ua = ua
+        item.cookie = cookie
+        item.mimeHint = mime
+        item.disposition = disposition
+        item.blockPrograms = blockPrograms
+        items.add(item)
+        trim(app)
+        if (useService) {
+            try {
+                app.startForegroundService(Intent(app, DownloadService::class.java))
+            } catch (e: Exception) {
+                // the download still runs while the app is open
+            }
+        }
+        pool.execute { run(app, item) }
+        return item
+    }
+
+    fun retry(ctx: Context, id: Long, useService: Boolean) {
+        val old = items.firstOrNull { x -> x.id == id } ?: return
+        val ua = if (old.ua.isNotEmpty()) old.ua else android.webkit.WebSettings.getDefaultUserAgent(ctx)
+        val url = old.url
+        val name = old.name
+        val cookie = old.cookie
+        val blockP = old.blockPrograms
+        delete(ctx, id)
+        start(ctx, url, name, old.mimeHint, old.disposition, ua, cookie, useService, blockP)
+    }
+
+    /** Cancels a running download, or deletes a finished one together with its file. */
+    fun delete(ctx: Context, id: Long) {
+        val app = ctx.applicationContext
+        val d = items.firstOrNull { x -> x.id == id } ?: return
+        if (d.state == "running" || d.state == "waiting") {
+            d.cancel = true
+            return
+        }
+        if (d.uri.isNotEmpty()) {
+            try {
+                app.contentResolver.delete(Uri.parse(d.uri), null, null)
+            } catch (e: Exception) {
+                // already gone
+            }
+        }
+        items.remove(d)
+        save(app)
+    }
+
+    /** Clears the list. Files stay on the phone. Running downloads keep going. */
+    fun clearList(ctx: Context) {
+        val app = ctx.applicationContext
+        load(app)
+        for (d in items) {
+            if (d.state != "running" && d.state != "waiting") items.remove(d)
+        }
+        save(app)
+    }
+
+    fun open(ctx: Context, id: Long, say: (String) -> Unit) {
+        val d = items.firstOrNull { x -> x.id == id } ?: return
+        if (d.uri.isEmpty()) {
+            say("Open it from your Files app, in the Downloads folder")
+            return
+        }
+        try {
+            if (d.mime == "application/vnd.android.package-archive" || d.name.lowercase().endsWith(".apk")) {
+                say("App files are installed from your Files app. Only install apps you trust.")
+                return
+            }
+            val uri = Uri.parse(d.uri)
+            val i = if (d.mime == "application/pdf") {
+                // PDF files open in Nirobo's own offline reader
+                Intent(ctx, PdfReaderActivity::class.java).setData(uri)
+            } else {
+                Intent(Intent.ACTION_VIEW).setDataAndType(uri, d.mime.ifEmpty { "*/*" })
+            }
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.startActivity(i)
+        } catch (e: Exception) {
+            say("No app on your phone can open this file")
+        }
+    }
+
+    /** Puts a file that is already on the phone (a saved page) into the Downloads folder. */
+    fun addLocal(ctx: Context, src: File, name: String, mime: String, say: (String) -> Unit) {
+        val app = ctx.applicationContext
+        load(app)
+        val item = DlItem(seq.incrementAndGet(), "", name)
+        item.mime = mime
+        item.state = "running"
+        items.add(item)
+        pool.execute {
+            try {
+                val (out, finish) = openOutput(app, item, name, mime)
+                src.inputStream().use { ins -> out.use { o -> ins.copyTo(o) } }
+                item.total = src.length()
+                item.got = item.total
+                finish()
+                item.state = "done"
+                say("Saved " + item.name)
+            } catch (e: Exception) {
+                item.state = "failed"
+                item.error = e.message ?: "Could not save the page"
+            }
+            src.delete()
+            save(app)
+        }
+    }
+
+    // ---------- the work ----------
+
+    private fun cleanName(raw: String): String {
+        var n = raw.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trimStart('.')
+        if (n.isEmpty()) n = "download"
+        return n
+    }
+
+    private fun friendly(e: Throwable): String {
+        return when (e) {
+            is java.net.UnknownHostException -> "No internet, or this address does not exist."
+            is java.net.SocketTimeoutException -> "The website took too long to answer."
+            is javax.net.ssl.SSLException -> "The secure connection failed."
+            is java.net.ConnectException -> "Could not connect to the website."
+            else -> e.message ?: e.javaClass.simpleName
+        }
+    }
+
+    /** Opens the place where the file is written. Returns the stream and a function that finishes the file. */
+    private fun openOutput(ctx: Context, item: DlItem, name: String, mime: String): Pair<OutputStream, () -> Unit> {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val values = ContentValues()
+            values.put(MediaStore.Downloads.DISPLAY_NAME, name)
+            values.put(MediaStore.Downloads.MIME_TYPE, mime)
+            values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            values.put(MediaStore.Downloads.IS_PENDING, 1)
+            val uri = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw Exception("Can't create the file")
+            item.uri = uri.toString()
+            val out = ctx.contentResolver.openOutputStream(uri) ?: throw Exception("Can't write the file")
+            return Pair(out, {
+                val v = ContentValues()
+                v.put(MediaStore.Downloads.IS_PENDING, 0)
+                ctx.contentResolver.update(uri, v, null, null)
+                Unit
+            })
+        }
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        dir.mkdirs()
+        var f = File(dir, name)
+        var n = 1
+        while (f.exists()) {
+            val dot = name.lastIndexOf('.')
+            val fresh = if (dot > 0) name.substring(0, dot) + " (" + n + ")" + name.substring(dot) else name + " (" + n + ")"
+            f = File(dir, fresh)
+            n++
+        }
+        item.name = f.name
+        val path = f.absolutePath
+        return Pair(FileOutputStream(f), {
+            android.media.MediaScannerConnection.scanFile(ctx, arrayOf(path), null, null)
+        })
+    }
+
+    private fun run(ctx: Context, item: DlItem) {
+        item.state = "running"
+        updateNote(ctx, true)
+        var conn: HttpURLConnection? = null
+        try {
+            var u = item.url
+            var hops = 0
+            val firstHost = URL(u).host
+            while (true) {
+                val c = URL(u).openConnection() as HttpURLConnection
+                c.instanceFollowRedirects = false
+                c.connectTimeout = 15000
+                c.readTimeout = 25000
+                c.setRequestProperty("User-Agent", item.ua)
+                c.setRequestProperty("Accept", "*/*")
+                val ck = item.cookie
+                if (ck != null && URL(u).host == firstHost) c.setRequestProperty("Cookie", ck)
+                val code = c.responseCode
+                if (code in 300..399) {
+                    val loc = c.getHeaderField("Location") ?: throw Exception("The website sent a broken redirect")
+                    c.disconnect()
+                    val next = URL(URL(u), loc).toString()
+                    if (!next.startsWith("https://")) throw Exception("The link sends you to an insecure (http) address")
+                    hops++
+                    if (hops > 8) throw Exception("The link redirects too many times")
+                    u = next
+                    continue
+                }
+                if (code != 200) {
+                    c.disconnect()
+                    throw Exception("The website answered with error $code")
+                }
+                conn = c
+                break
+            }
+            val c = conn ?: throw Exception("No answer")
+            val type = c.contentType?.substringBefore(';')?.trim()?.lowercase()
+            val dispo = c.getHeaderField("Content-Disposition") ?: item.disposition
+            val name = cleanName(URLUtil.guessFileName(u, dispo, type ?: item.mimeHint))
+            item.name = name
+            item.mime = type ?: item.mimeHint ?: "application/octet-stream"
+            val len = c.contentLengthLong
+            item.total = if (len > 0) len else 0L
+            if (item.total > MAX_FILE) throw Exception("The file is too big")
+            val lower = name.lowercase()
+            if (item.blockPrograms && program.any { lower.endsWith(it) }) {
+                throw Exception("Blocked: program files can harm your devices")
+            }
+            val (out, finish) = openOutput(ctx, item, name, item.mime)
+            try {
+                c.inputStream.use { ins ->
+                    out.use { o ->
+                        val buf = ByteArray(32 * 1024)
+                        while (true) {
+                            if (item.cancel) throw Canceled()
+                            val n = ins.read(buf)
+                            if (n < 0) break
+                            o.write(buf, 0, n)
+                            item.got += n
+                            if (item.got > MAX_FILE) throw Exception("The file is too big")
+                            updateNote(ctx, false)
+                        }
+                    }
+                }
+                finish()
+            } catch (e: Throwable) {
+                discard(ctx, item)
+                throw e
+            }
+            item.state = "done"
+            doneNote(ctx, item)
+        } catch (e: Canceled) {
+            items.remove(item)
+        } catch (e: Throwable) {
+            item.state = "failed"
+            item.error = friendly(e)
+        } finally {
+            try {
+                conn?.disconnect()
+            } catch (e: Exception) {
+                // ignore
+            }
+            save(ctx)
+            updateNote(ctx, true)
+        }
+    }
+
+    /** Removes the half-written file. */
+    private fun discard(ctx: Context, item: DlItem) {
+        try {
+            if (item.uri.isNotEmpty()) ctx.contentResolver.delete(Uri.parse(item.uri), null, null)
+            else if (Build.VERSION.SDK_INT < 29) {
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), item.name).delete()
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        item.uri = ""
+    }
+
+    // ---------- notification ----------
+
+    private fun active(): List<DlItem> = items.filter { x -> x.state == "running" || x.state == "waiting" }
+
+    private fun updateNote(ctx: Context, force: Boolean) {
+        val svc = service ?: return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastNote < 800) return
+        lastNote = now
+        val act = active()
+        if (act.isEmpty()) {
+            svc.finish()
+            return
+        }
+        val first = act[0]
+        val pct = if (first.total > 0) (first.got * 100 / first.total).toInt() else 0
+        val more = if (act.size > 1) " (+" + (act.size - 1) + ")" else ""
+        svc.update(first.name + more, pct, first.total <= 0)
+    }
+
+    fun onServiceReady() {
+        updateNote(service?.applicationContext ?: return, true)
+    }
+
+    private fun doneNote(ctx: Context, item: DlItem) {
+        try {
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val open = Intent(ctx, MainActivity::class.java)
+            open.putExtra("nirobo_widget", "downloads")
+            open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            val pi = PendingIntent.getActivity(
+                ctx, 77, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val n = Notification.Builder(ctx, CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("Download finished")
+                .setContentText(item.name)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build()
+            nm.notify((item.id % 100000).toInt() + 10, n)
+        } catch (e: Exception) {
+            // the notification is a bonus
+        }
+    }
+}
+
+/** Keeps the process alive while files are downloading, and shows the progress. */
+internal class DownloadService : Service() {
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(
+            NotificationChannel(Downloader.CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW)
+        )
+        Downloader.service = this
+        val n = build("Starting...", 0, true)
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(Downloader.NOTE_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(Downloader.NOTE_ID, n)
+        }
+        Downloader.onServiceReady()
+        return START_NOT_STICKY
+    }
+
+    private fun build(text: String, percent: Int, indeterminate: Boolean): Notification {
+        val open = Intent(this, MainActivity::class.java)
+        open.putExtra("nirobo_widget", "downloads")
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val pi = PendingIntent.getActivity(
+            this, 78, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return Notification.Builder(this, Downloader.CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("Nirobo downloads")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setProgress(100, percent, indeterminate)
+            .setContentIntent(pi)
+            .build()
+    }
+
+    fun update(text: String, percent: Int, indeterminate: Boolean) {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(Downloader.NOTE_ID, build(text, percent, indeterminate))
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    fun finish() {
+        stopForeground(true)
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        if (Downloader.service === this) Downloader.service = null
+        super.onDestroy()
+    }
+}

@@ -48,3 +48,28 @@ Flat repo: GitHub Actions (`.github/workflows/build.yml`) copies every `*.kt` in
 
 ## How to continue cheaply
 Open this file, pick the next item, edit only the functions named above (use grep for the function name, don't read whole files), update "Done so far" when finished.
+
+---
+# PENDING WORK from "Chat B" (designed + coded, NOT merged into the repo)
+Written against an OLDER MainActivity/AboutPages. **Merge by hook, never overwrite whole files.**
+Reference code is in `HANDOFF_SNIPPETS.md`, `Downloader.kt.txt`, `LinkCheck.kt.txt` (the `.txt` keeps CI from compiling them; rename to `.kt` when merging).
+Can't compile in the sandbox: all page JS was syntax-checked with node; QR was verified by decoding with OpenCV (6/6).
+Kotlin raw-string pages: never write a bare `$` in page JS (use `${'$'}`).
+
+## What the user asked for (Nov 21) and the plan, in order
+1. **Own downloader (no phone DownloadManager)** – `Downloader.kt.txt`: `DlItem`, `object Downloader` (2-thread pool, https-only redirects, MediaStore.Downloads on API 29+, progress, cancel, retry, delete, persisted list in Store key `dl2`), `DownloadService` (foreground, dataSync, notification).
+   Hooks: manifest `<service android:name=".DownloadService" android:exported="false" android:foregroundServiceType="dataSync"/>` + permissions FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC.
+   MainActivity: `enqueueDownload` -> `Downloader.start(this,url,name,mime,disposition,ua,cookie,!isPrivate&&!isSandbox,store.dangerFiles)`; `downloadsJson()` -> `Downloader.json(this)`; open/delete/retry -> `Downloader.open/delete/retry`; `Downloader.persist = !isPrivate && !isSandbox` in onCreate; Bridge `clearDownloads` -> `Downloader.clearList(act)`; widget action `downloads`.
+   Downloads page: show `d.err` for failed items (real reason, e.g. "The website answered with error 403"). APK is **allowed** with a confirm dialog (user wants APK/video/image/file). Program files (.exe...) stay behind the `dangerFiles` switch.
+   The user's current downloads fail ("search.bin Failed") – the new error text will show why.
+2. **Pink site / no animation** – cause: `s.forceDark = if (isDark()) ON else OFF` recolours websites. Replace by `store.darkPages` (default false) + `applyDark()`. Autoplay: `mediaPlaybackRequiresUserGesture = !store.autoplay` (default allow), `MUTE_JS` mutes videos that start without a tap in 3 s (audio stays allowed), toggles on `about:protect` ("Media and display": autoplay, mute videos, dark pages). Store: `autoplay`, `muteVideo`, `darkPages`, `checkShort`.
+3. **Link safety checker** – `LinkCheck.kt.txt` (follows redirects by hand, no cookies, blocks private-IP hops, scans first 150 KB of HTML: gambling, 18+, scam words, meta/JS redirects, auto-download, hidden iframes, obfuscation, fake brand mirrors, download of apk/exe). Page `about:check` (snippet), Bridge: `startCheck(url)` -> id, `checkResult(id)` ("" while running), `checkTarget()`, `openSandbox(url)`, `copyText(text)`. MainActivity: fields `checkTarget`, `qrTarget`; `sandboxUrl()`; menu items "Check link safety" (link menu) and "Check this page's safety" (page menu); short-link prompt in `shouldOverrideUrlLoading` (hosts: bit.ly, tinyurl.com, t.co, goo.gl ... option `store.checkShort`). Replace the JS-only "Test a link" block on the Safety page by a row to `about:check`.
+4. **News**: (a) country picker – "BD" = nirobo.pages.dev feed (full text + pictures), other countries = Google News RSS headlines (`news.google.com/rss?hl=..&gl=CC&ceid=CC:lang`); Store `newsCountry`, `newsSavedCountry`; NewsSaver functions `fetchNirobo/fetchRss/countriesJson/status`; Bridge `newsCountries/newsCountry/setNewsCountry/newsStatus/redownloadNews`. (b) listen mode – TextToSpeech in MainActivity (`speak/speakNow/stopSpeaking`, Bangla voice bn-BD when text has Bengali letters), Bridge `speak/speakMany/stopSpeak`, buttons on the news page.
+5. **Charge page redesign** (`about:phone`, user said the current one looks poor): new page snippet copies the Charge Meter app (gauge with ticks, 3-colour arc, big mA, light-use chip, lasts-about, lifetime max/min + Reset, capacity card, tiles). Needs `phoneInfo()` extras: `currentMa` (signed, normalised), `nowMah`, `fullMah` (= now / level%), `designMah` (reflection on `com.android.internal.os.PowerProfile.getBatteryCapacity`), `healthPct`, `cycles` (EXTRA_CYCLE_COUNT or /sys/class/power_supply/battery/cycle_count), `curMax/curMin` (Store ints) + Bridge `resetLife()`.
+6. **Page long-press menu like Chrome**: add "Download page" (`WebView.saveWebArchive` -> `Downloader.addLocal`), "Download video" (JS `VIDEO_JS` finds direct https <video>/<source>, no blob/m3u8), "Create QR code for this page" (`about:qr`, JS QR maker in snippets, Bridge `qrText()`), keep Print/Share/Reader/Translate. "Send to your device" is NOT possible (needs a sign-in account).
+
+## Already merged earlier (do not redo)
+Protection layers page `about:protect` (5 ad layers + 7 protections), Safety check page, Email & passwords page `about:mail`, voice search mic, Windows-style desktop layout (tab strip + right rail), five widgets, offline news with pictures, adaptive icon, custom search engines with favicon, calculator at `about:calc` (hidden, not in menu).
+
+## User preferences for the helper
+Simple words, one clear step at a time, **one big upload instead of many small ones**, low token use (read CLAUDE.md only, grep function names, don't re-read old chats), never ask the user to paste secrets. User works only from a phone and uploads files through the GitHub website.
