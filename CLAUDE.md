@@ -85,3 +85,18 @@ Protection layers page `about:protect` (5 ad layers + 7 protections), Safety che
 
 ## User preferences for the helper
 Simple words, one clear step at a time, **one big upload instead of many small ones**, low token use (read CLAUDE.md only, grep function names, don't re-read old chats), never ask the user to paste secrets. User works only from a phone and uploads files through the GitHub website.
+
+---
+# NEW PLAN (Nov 22, user request) - "All-in-one + safe mail" - do in this order
+User: has personal + work SIM/accounts; wants one app instead of many (Facebook/Lite, Messenger, WhatsApp, Telegram, Discord, imo, email, YouTube, TikTok, Likee, Odysee, BitChute; "chanfchat" unknown - ask user). Wants mail link safety (phishing, adsterra/monetag, 18+, gambling). Goal: small, no tracking, slows bad actors.
+1. **Spaces (Personal / Work)**: separate cookies/logins. No AndroidX allowed -> use separate Android processes like PrivateActivity: `PersonalActivity`/`WorkActivity` subclasses with `android:process=":work"` in manifest + `WebView.setDataDirectorySuffix("work")` BEFORE the first WebView (in `onCreate` / Application). Store per-space: tabs, session, shield. Menu: "Switch space". Private/sandbox rules still apply.
+2. **Apps hub `about:apps`**: tiles that open web versions: Facebook (m / mbasic = Lite), Messenger, WhatsApp Web (desktop UA), Telegram Web (web.telegram.org/k), Discord, imo (imo.im), YouTube, TikTok, Likee, Odysee, BitChute, Gmail/Outlook/Yahoo. Each tile -> chosen space; "Add to Home screen" reuse `addToHomeScreen`. Limits to tell user: no push notifications in WebView, camera/mic calls need roadmap item 5 (per-site permission prompt) FIRST.
+3. **Mail link inspector** (on mail sites only: mail.google.com, outlook.live.com, mail.yahoo.com): JS shows real href under each link; red warning when link text domain != href domain, lookalike brand names, shorteners, IP hosts, punycode, adsterra/monetag/propellerads/popads hosts, gambling/18+ words; use `LinkCheck.kt.txt` for "Check link". Block remote tracking pixels (1x1 images from tracker hosts). Cannot truly verify the sender from a WebView - say "look at the real address" not "safe".
+4. Add to `blocklist.txt`: adsterra, monetag, propellerads, popads, exoclick, juicyads, trafficjunky, clickadu, hilltopads + missing trackers from audit item 6.
+5. Then audit items 3 (https fallback), 4/5 (permissions per site), 2, 7.
+Principles: zero telemetry, no accounts, no extensions (extensions are how emails get harvested), weekly list updates, app stays small.
+
+## Decisions (Nov 22, late)
+- **MENU RULE: add at most ONE new item to the 3-line menu: "Apps & Spaces" (opens `about:apps`).** Space switching, app tiles, mail settings live inside that page. Do not add other menu items.
+- Overcoming limits: (a) calls -> per-site camera/mic/location prompt (roadmap 5) FIRST, remember choice per origin in Store; (b) notifications -> no Web Push in WebView; instead keep the tab alive with a foreground service and turn title counters like "(3) WhatsApp" / unread badges (`onReceivedTitle`) into local notifications; works only while app is running, say so; (c) sender check -> on mail sites read From name + address from the page, warn if brand in name != address domain or lookalike (paypa1, g00gle, punycode); link inspector as planned.
+- Order now: 1 permission prompt, 2 Spaces, 3 `about:apps` + 1 menu item, 4 title->notification, 5 mail inspector, 6 blocklist additions.
