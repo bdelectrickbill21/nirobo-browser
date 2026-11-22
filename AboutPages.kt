@@ -546,103 +546,204 @@ internal object AboutPages {
     private fun downloads(dark: Boolean): String {
         val body = """
         <style>
-        .pbar{height:6px;border-radius:3px;background:rgba(127,127,127,.25);overflow:hidden;margin:8px 0}
-        .pbar i{display:block;height:100%;width:0;background:#1E9E63}
+        .pbar{height:5px;border-radius:3px;background:rgba(127,127,127,.25);overflow:hidden;margin:8px 0 2px}
+        .pbar i{display:block;height:100%;width:0;background:#1E9E63;transition:width .4s}
+        .pbar.pz i{background:#9AA0A6}
         .in{width:100%;font:inherit;padding:12px;border-radius:11px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit;box-sizing:border-box}
+        .use{font-size:13px;opacity:.75;margin:0 0 10px}
+        .chips{display:flex;gap:8px;overflow-x:auto;margin:10px 0;padding-bottom:4px}
+        .chip{flex:none;padding:7px 14px;border-radius:16px;border:1px solid rgba(127,127,127,.45);font-size:13px;cursor:pointer}
+        .chip.on{background:#1E9E63;border-color:#1E9E63;color:#fff}
+        .grp{font-size:13px;font-weight:600;opacity:.7;margin:16px 4px 6px}
+        .mt{text-align:center;padding:56px 12px 40px}
+        .mt .ring{width:96px;height:96px;border-radius:48px;background:rgba(80,100,255,.12);margin:0 auto 18px;display:flex;align-items:center;justify-content:center;font-size:40px;color:#6C86FF}
+        .mt b{display:block;font-size:19px;margin-bottom:6px}
+        .mt span{opacity:.75;font-size:14px}
+        .err{color:#D93025}
+        details.add{margin:12px 0}
+        details.add summary{cursor:pointer;font-size:14px;opacity:.8}
         </style>
         <h1>Downloads</h1>
-        <p class="sub">Files this browser has downloaded.</p>
-        <div class="card">
-          <input class="in" id="dl-url" type="url" placeholder="Paste a link to download (https)" autocapitalize="off" autocomplete="off">
-          <div style="height:10px"></div>
-          <button onclick="startDl()">Download</button>
-          <p class="hint" id="dl-msg"></p>
+        <p class="use" id="usage"></p>
+        <input class="in" id="q" type="search" placeholder="Search downloads" autocomplete="off" oninput="redraw()">
+        <div class="chips" id="chips"></div>
+        <div class="tb" style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 6px">
+          <button class="ghost" onclick="Bridge.pauseAllDownloads();again()">Pause all</button>
+          <button class="ghost" onclick="Bridge.resumeAllDownloads();again()">Resume all</button>
+          <button class="ghost" onclick="clearAll()">Clear list</button>
         </div>
-        <p><button class="ghost" onclick="clearAll()">Clear list</button></p>
-        <div class="card" id="list"></div>
-        <p class="hint">Files are saved to your phone's Downloads folder. PDF files open in Nirobo's own offline reader.</p>
+        <div id="list"></div>
+        <details class="add">
+          <summary>Download from a link</summary>
+          <div class="card">
+            <input class="in" id="dl-url" type="url" placeholder="Paste a link to download (https)" autocapitalize="off" autocomplete="off">
+            <div style="height:10px"></div>
+            <button onclick="startDl()">Download</button>
+            <p class="hint" id="dl-msg"></p>
+          </div>
+        </details>
+        <p class="hint">Nirobo downloads files by itself: pause, resume and retry work, and a download that lost the internet continues when it is back. Finished files are saved in your phone's Downloads folder. PDF files open in Nirobo's own offline reader.</p>
         """
         val script = """
         function g(i){return document.getElementById(i)}
+        var FILTERS=[['all','All'],['image','Images'],['video','Video'],['audio','Audio'],['doc','Documents'],['other','Other']];
+        var filter='all',lastKey='',data=[];
         function fmt(b){
-          if(!b||b<0)return '';
-          var u=['B','KB','MB','GB'],i=0;
-          while(b>=1024&&i<3){b/=1024;i++}
-          return (i?b.toFixed(1):Math.round(b))+' '+u[i]}
+          if(!b||b<0)return '0 B';
+          var u=['B','KB','MB','GB','TB'],i=0;
+          while(b>=1024&&i<4){b/=1024;i++}
+          return (i?b.toFixed(i>=3?2:1):Math.round(b))+' '+u[i]}
+        function eta(s){
+          if(!isFinite(s)||s<0)return '';
+          if(s<60)return Math.ceil(s)+' s left';
+          if(s<3600)return Math.ceil(s/60)+' min left';
+          return (s/3600).toFixed(1)+' h left'}
+        function ext(n){return (n.indexOf('.')>=0?n.split('.').pop():'').toLowerCase()}
+        function kind(n){
+          var e=ext(n);
+          if(['jpg','jpeg','png','gif','webp','bmp','heic','svg'].indexOf(e)>=0)return 'image';
+          if(['mp4','mkv','webm','3gp','avi','mov','m4v'].indexOf(e)>=0)return 'video';
+          if(['mp3','m4a','wav','ogg','aac','flac','opus'].indexOf(e)>=0)return 'audio';
+          if(['pdf','doc','docx','txt','odt','rtf','xls','xlsx','csv','ods','ppt','pptx','mht','html'].indexOf(e)>=0)return 'doc';
+          return 'other'}
         function icon(n){
-          var e=(n.split('.').pop()||'').toLowerCase();
-          if(e==='pdf')return '\uD83D\uDCD5';
-          if(['jpg','jpeg','png','gif','webp','bmp'].indexOf(e)>=0)return '\uD83D\uDDBC';
-          if(['mp4','mkv','webm','3gp','avi','mov'].indexOf(e)>=0)return '\uD83C\uDFAC';
-          if(['mp3','m4a','wav','ogg','aac','flac'].indexOf(e)>=0)return '\uD83C\uDFB5';
-          if(['zip','rar','7z','tar','gz'].indexOf(e)>=0)return '\uD83D\uDDDC';
-          if(['doc','docx','txt','odt','rtf'].indexOf(e)>=0)return '\uD83D\uDCDD';
-          if(['xls','xlsx','csv','ods'].indexOf(e)>=0)return '\uD83D\uDCCA';
-          return '\uD83D\uDCC1'}
+          var e=ext(n),k=kind(n);
+          if(e==='pdf')return '📕';
+          if(k==='image')return '🖼';
+          if(k==='video')return '🎬';
+          if(k==='audio')return '🎵';
+          if(['zip','rar','7z','tar','gz'].indexOf(e)>=0)return '🗜';
+          if(e==='apk')return '📦';
+          if(k==='doc')return '📝';
+          return '📁'}
         function pct(d){return d.total>0?Math.min(100,Math.round(d.got*100/d.total)):0}
+        function active(d){return d.s==='running'||d.s==='waiting'||d.s==='paused'}
+        function clock(ts){return new Date(ts).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}
+        function dayName(ts){
+          var d=new Date(ts),n=new Date(),y=new Date(n.getTime()-86400000);
+          if(d.toDateString()===n.toDateString())return 'Today';
+          if(d.toDateString()===y.toDateString())return 'Yesterday';
+          return d.toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})}
         function statusText(d){
-          if(d.s==='done')return 'Done'+(d.total>0?' - '+fmt(d.total):'');
-          if(d.s==='failed')return 'Failed. Check your connection, then tap Retry.';
+          if(d.s==='failed')return d.err||'Failed';
           if(d.s==='gone')return 'The file was removed';
-          var t=(d.s==='waiting')?'Waiting...':((d.s==='paused')?'Paused':'Downloading');
-          if(d.total>0)t+=' '+pct(d)+'% - '+fmt(d.got)+' of '+fmt(d.total);
-          else if(d.got>0)t+=' - '+fmt(d.got);
-          return t}
+          if(d.s==='waiting')return 'Waiting in line...';
+          if(d.s==='paused'){
+            var p='Paused';
+            if(d.auto)p='Waiting for the network';
+            if(d.total>0)p+=' - '+pct(d)+'% of '+fmt(d.total);
+            return p}
+          if(d.s==='running'){
+            var t='Downloading';
+            if(d.total>0)t+=' '+pct(d)+'% - '+fmt(d.got)+' of '+fmt(d.total);
+            else if(d.got>0)t+=' - '+fmt(d.got);
+            if(d.sp>0){
+              t+=' - '+fmt(d.sp)+'/s';
+              if(d.total>0){var e=eta((d.total-d.got)/d.sp);if(e)t+=' - '+e}}
+            return t}
+          var m=[];
+          if(d.h)m.push(d.h);
+          if(d.total>0)m.push(fmt(d.total));
+          m.push(clock(d.ts));
+          return m.join(' - ')}
         function mkBtn(label,ghost,fn){
           var b=document.createElement('button');
           b.textContent=label;if(ghost)b.className='ghost';
           b.style.padding='8px 16px';b.style.marginRight='8px';b.style.marginTop='6px';
           b.onclick=fn;return b}
-        var lastKey='';
+        function chips(){
+          var el=g('chips');el.innerHTML='';
+          FILTERS.forEach(function(f){
+            var c=document.createElement('div');
+            c.className='chip'+(filter===f[0]?' on':'');
+            c.textContent=f[1];
+            c.onclick=function(){filter=f[0];chips();redraw()};
+            el.appendChild(c)})}
+        function row(d){
+          var row=document.createElement('div');row.className='item';
+          var top=document.createElement('div');
+          top.style.display='flex';top.style.gap='12px';top.style.alignItems='center';
+          var ic=document.createElement('div');ic.style.fontSize='26px';ic.textContent=icon(d.n);
+          var tt=document.createElement('div');tt.style.flex='1';tt.style.minWidth='0';
+          var nm=document.createElement('div');nm.className='t';nm.style.wordBreak='break-all';nm.textContent=d.n;
+          var st=document.createElement('div');st.className='u'+(d.s==='failed'?' err':'');st.id='st-'+d.id;st.textContent=statusText(d);
+          tt.appendChild(nm);tt.appendChild(st);top.appendChild(ic);top.appendChild(tt);row.appendChild(top);
+          if(active(d)){
+            var bar=document.createElement('div');bar.className='pbar'+(d.s==='paused'?' pz':'');
+            var fill=document.createElement('i');fill.id='pb-'+d.id;fill.style.width=pct(d)+'%';
+            bar.appendChild(fill);row.appendChild(bar)}
+          var bx=document.createElement('div');
+          if(d.s==='done'){
+            bx.appendChild(mkBtn('Open',false,function(){Bridge.openDownload(d.id)}));
+            bx.appendChild(mkBtn('Share',true,function(){Bridge.shareDownload(d.id)}));
+            if(d.u)bx.appendChild(mkBtn('Copy link',true,function(){Bridge.copyDownloadLink(d.id)}));
+            bx.appendChild(mkBtn('Delete',true,function(){del(d.id)}))}
+          else if(d.s==='failed'){
+            if(d.u)bx.appendChild(mkBtn('Retry',false,function(){Bridge.retryDownload(d.id);again()}));
+            if(d.u)bx.appendChild(mkBtn('Copy link',true,function(){Bridge.copyDownloadLink(d.id)}));
+            bx.appendChild(mkBtn('Delete',true,function(){del(d.id)}))}
+          else if(d.s==='gone'){
+            bx.appendChild(mkBtn('Remove from list',true,function(){del(d.id)}))}
+          else if(d.s==='paused'){
+            bx.appendChild(mkBtn('Resume',false,function(){Bridge.retryDownload(d.id);again()}));
+            bx.appendChild(mkBtn('Cancel',true,function(){del(d.id)}))}
+          else if(d.s==='running'){
+            bx.appendChild(mkBtn('Pause',false,function(){Bridge.pauseDownload(d.id);again()}));
+            bx.appendChild(mkBtn('Cancel',true,function(){del(d.id)}))}
+          else{
+            bx.appendChild(mkBtn('Cancel',true,function(){del(d.id)}))}
+          row.appendChild(bx);return row}
+        function shown(){
+          var q=g('q').value.trim().toLowerCase();
+          return data.filter(function(d){
+            if(filter!=='all'&&kind(d.n)!==filter)return false;
+            if(q&&(d.n.toLowerCase().indexOf(q)<0&&(d.h||'').toLowerCase().indexOf(q)<0))return false;
+            return true})}
         function draw(){
-          var a;try{a=JSON.parse(Bridge.downloadsLive())}catch(e){a=[]}
-          var key=a.map(function(d){return d.id+d.s}).join('|');
-          var el=g('list');
-          if(key===lastKey&&a.length){
-            for(var i=0;i<a.length;i++){
-              var st=g('st-'+a[i].id),pb=g('pb-'+a[i].id);
-              if(st)st.textContent=statusText(a[i]);
-              if(pb)pb.style.width=pct(a[i])+'%'}
+          var r;
+          try{r=JSON.parse(Bridge.downloadsLive());data=r.items||[];
+            g('usage').textContent='Using '+fmt(r.used)+(r.cap>0?' of '+fmt(r.cap):'')}catch(e){data=[]}
+          var list=shown();
+          var key=filter+'|'+g('q').value+'|'+list.map(function(d){return d.id+d.s}).join('|');
+          if(key===lastKey&&list.length){
+            for(var i=0;i<list.length;i++){
+              var st=g('st-'+list[i].id),pb=g('pb-'+list[i].id);
+              if(st)st.textContent=statusText(list[i]);
+              if(pb)pb.style.width=pct(list[i])+'%'}
             return}
           lastKey=key;
-          el.innerHTML='';
-          if(!a.length){
-            var em=document.createElement('div');em.className='empty';
-            em.textContent='No downloads yet.';el.appendChild(em);return}
-          for(var i=0;i<a.length;i++){(function(d){
-            var row=document.createElement('div');row.className='item';
-            var top=document.createElement('div');
-            top.style.display='flex';top.style.gap='12px';top.style.alignItems='center';
-            var ic=document.createElement('div');ic.style.fontSize='26px';ic.textContent=icon(d.n);
-            var tt=document.createElement('div');tt.style.flex='1';tt.style.minWidth='0';
-            var nm=document.createElement('div');nm.className='t';nm.style.wordBreak='break-all';nm.textContent=d.n;
-            var st=document.createElement('div');st.className='u';st.id='st-'+d.id;st.textContent=statusText(d);
-            tt.appendChild(nm);tt.appendChild(st);top.appendChild(ic);top.appendChild(tt);row.appendChild(top);
-            if(d.s==='running'||d.s==='waiting'||d.s==='paused'){
-              var bar=document.createElement('div');bar.className='pbar';
-              var fill=document.createElement('i');fill.id='pb-'+d.id;fill.style.width=pct(d)+'%';
-              bar.appendChild(fill);row.appendChild(bar)}
-            var bx=document.createElement('div');
-            if(d.s==='done'){
-              bx.appendChild(mkBtn('Open',false,function(){Bridge.openDownload(d.id)}));
-              bx.appendChild(mkBtn('Delete',true,function(){del(d.id)}))}
-            else if(d.s==='failed'){
-              bx.appendChild(mkBtn('Retry',false,function(){Bridge.retryDownload(d.id);again()}));
-              bx.appendChild(mkBtn('Delete',true,function(){del(d.id)}))}
-            else if(d.s==='gone'){
-              bx.appendChild(mkBtn('Remove from list',true,function(){del(d.id)}))}
-            else{
-              bx.appendChild(mkBtn('Cancel',true,function(){del(d.id)}))}
-            row.appendChild(bx);el.appendChild(row)})(a[i])}}
-        function again(){lastKey='';setTimeout(draw,700)}
+          var el=g('list');el.innerHTML='';
+          if(!data.length){
+            var em=document.createElement('div');em.className='mt';
+            em.innerHTML='<div class="ring">⬇</div><b>You’ll find your downloads here</b><span>You can save images and files to view offline or share in other apps</span>';
+            el.appendChild(em);return}
+          if(!list.length){
+            var no=document.createElement('div');no.className='mt';
+            no.innerHTML='<span>Nothing matches</span>';el.appendChild(no);return}
+          var live=list.filter(active);
+          var rest=list.filter(function(d){return !active(d)});
+          if(live.length){
+            var h0=document.createElement('div');h0.className='grp';h0.textContent='In progress';el.appendChild(h0);
+            var c0=document.createElement('div');c0.className='card';
+            live.forEach(function(d){c0.appendChild(row(d))});el.appendChild(c0)}
+          var day='',card=null;
+          rest.forEach(function(d){
+            var dn=dayName(d.ts);
+            if(dn!==day){
+              day=dn;
+              var h=document.createElement('div');h.className='grp';h.textContent=dn;el.appendChild(h);
+              card=document.createElement('div');card.className='card';el.appendChild(card)}
+            card.appendChild(row(d))})}
+        function redraw(){lastKey='';draw()}
+        function again(){lastKey='';setTimeout(draw,300)}
         function del(id){Bridge.deleteDownload(id);again()}
         function startDl(){
           var r=Bridge.downloadLink(g('dl-url').value);
           var m=g('dl-msg');
-          if(r==='ok'){m.textContent='Started. You can watch it below.';g('dl-url').value='';again()}
+          if(r==='ok'){m.textContent='Started. You can watch it above.';g('dl-url').value='';again()}
           else m.textContent=r}
         function clearAll(){Bridge.clearDownloads();again()}
-        draw();setInterval(draw,1500);
+        chips();draw();setInterval(draw,1000);
         """
         return page("Downloads", dark, body, script)
     }
@@ -1621,7 +1722,7 @@ internal class Bridge(
 
     @JavascriptInterface
     fun clearDownloads() {
-        store.clearDownloads()
+        act.clearDownloadList()
     }
 
     // ---------- settings ----------
@@ -2025,6 +2126,31 @@ internal class Bridge(
         act.runOnUiThread { act.retryDownload(id) }
     }
 
+    @JavascriptInterface
+    fun copyDownloadLink(id: String) {
+        act.runOnUiThread { act.copyDownloadLink(id) }
+    }
+
+    @JavascriptInterface
+    fun pauseDownload(id: String) {
+        act.runOnUiThread { act.pauseDownload(id) }
+    }
+
+    @JavascriptInterface
+    fun shareDownload(id: String) {
+        act.runOnUiThread { act.shareDownload(id) }
+    }
+
+    @JavascriptInterface
+    fun pauseAllDownloads() {
+        Downloader.pauseAll()
+    }
+
+    @JavascriptInterface
+    fun resumeAllDownloads() {
+        Downloader.resumeAll()
+    }
+
     /** Returns "ok", or a short message that says what is wrong. */
     @JavascriptInterface
     fun downloadLink(url: String): String {
@@ -2041,7 +2167,7 @@ internal class Bridge(
     fun clear(key: String) {
         when (key) {
             "history" -> store.clearHistory()
-            "downloads" -> store.clearDownloads()
+            "downloads" -> act.clearDownloadList()
             "all" -> act.runOnUiThread { act.clearBrowsingData() }
             "cookies" -> act.runOnUiThread { act.clearCookiesNow() }
             "cache" -> act.runOnUiThread { act.clearCacheNow() }

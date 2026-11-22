@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- only Android 9 needs to ask before saving a download -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- keeps Nirobo's own downloader running while the browser is in the background -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <!-- Without this, Android 11 and newer hides "Search", "Translate" and "Share" from the
          text-selection menu, and the browser cannot see which apps can open a link. -->
@@ -71,6 +74,12 @@
                 <data android:scheme="https" />
             </intent-filter>
         </activity>
+
+        <!-- the download engine's background service (see Downloader.kt) -->
+        <service
+            android:name=".DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- home screen widgets -->
         <receiver

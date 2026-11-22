@@ -173,6 +173,7 @@ open class BrowserActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
+        Downloader.init(this)
         bridge = Bridge(this, store)
         window.statusBarColor = barColor
         applySecure()
@@ -260,6 +261,11 @@ open class BrowserActivity : Activity() {
     private fun handleWidget(intent: Intent?) {
         val what = intent?.getStringExtra("nirobo_widget") ?: return
         intent?.removeExtra("nirobo_widget")
+        if (what.startsWith("open:")) {
+            // a tap on a "Download complete" notification
+            openDownload(what.substring(5))
+            return
+        }
         when (what) {
             "search" -> addr.post {
                 addr.requestFocus()
@@ -783,12 +789,18 @@ open class BrowserActivity : Activity() {
             }
         }
 
+        // lets the page hand over a blob: file in pieces (needs a secret token, see BlobSaver)
+        if (!isSandbox) w.addJavascriptInterface(blobSaver, "NiroboBlob")
         w.setDownloadListener { url, userAgent, contentDisposition, mimetype, _ ->
             if (isSandbox) {
                 toast("Downloads are blocked in the sandbox")
                 return@setDownloadListener
             }
-            enqueueDownload(url, userAgent, contentDisposition, mimetype)
+            when {
+                url.startsWith("blob:") -> saveBlob(w, url, contentDisposition, mimetype)
+                url.startsWith("data:") -> saveDataLink(url, contentDisposition, mimetype)
+                else -> enqueueDownload(url, userAgent, contentDisposition, mimetype, w.url)
+            }
         }
         return t
     }
@@ -797,58 +809,106 @@ open class BrowserActivity : Activity() {
 
     private var askedNotification = false
 
-    /** Starts a download with Android's DownloadManager. Returns true when it started. */
+    private val blobSaver by lazy { BlobSaver(applicationContext) { m -> runOnUiThread { toast(m) } } }
+
+    /** Android 9 asks before a file is saved, Android 13 asks once so progress can show as a notification. */
+    private fun askStoragePermission(): Boolean {
+        if (Build.VERSION.SDK_INT < 29 &&
+            checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 702)
+            toast("Allow storage, then start the download again")
+            return false
+        }
+        if (Build.VERSION.SDK_INT >= 33 && !askedNotification &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            askedNotification = true
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 701)
+        }
+        return true
+    }
+
+    /** A blob: link only exists inside its page, so the page itself reads it and hands the bytes over. */
+    private fun saveBlob(w: WebView, url: String, cd: String?, mime: String?) {
+        if (!askStoragePermission()) return
+        Downloader.init(this)
+        blobSaver.fetch(w, url, parseDisposition(cd) ?: "download", mime ?: "", isPrivate)
+        toast("Saving file\u2026")
+    }
+
+    /** A data: link holds the whole file inside the address. */
+    private fun saveDataLink(url: String, cd: String?, mime: String?) {
+        if (!askStoragePermission()) return
+        Downloader.init(this)
+        val name = parseDisposition(cd) ?: "download"
+        if (Downloader.saveDataUrl(url, name, mime ?: "", isPrivate)) toast("Saving $name") else toast("Can't save this file")
+    }
+
+    /** Menu: "Download page" keeps the whole page (pictures included) in one .mht file you can open offline. */
+    private fun downloadPage(t: Tab) {
+        if (!askStoragePermission()) return
+        Downloader.init(this)
+        val title = if (t.title.isEmpty()) hostOf(t.url) else t.title
+        val name = cleanFileName(title.take(60)) + ".mht"
+        val tmp = java.io.File(Downloader.tempDir(this), "p" + System.currentTimeMillis() + ".tmp")
+        t.web.saveWebArchive(tmp.absolutePath, false) { path ->
+            if (path == null) {
+                toast("Can't save this page")
+            } else {
+                Downloader.addLocal(java.io.File(path), name, "multipart/related", isPrivate)
+                toast("Saving page")
+            }
+        }
+    }
+
+    /**
+     * Starts a download with Nirobo's own downloader (see Downloader.kt). Returns true when it started.
+     * [referer] is the page the download came from; many websites refuse a download without it.
+     */
     internal fun enqueueDownload(
         url: String,
         userAgent: String?,
         contentDisposition: String?,
-        mimetype: String?
+        mimetype: String?,
+        referer: String? = null
     ): Boolean {
         if (!url.startsWith("https://")) {
             toast("Blocked: downloads must use a secure (https) link")
             return false
         }
         try {
-            var name = URLUtil.guessFileName(url, contentDisposition, mimetype)
-            // keep only a plain file name: no folders, no hidden-file tricks
-            name = name.replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]"), "_").trimStart('.')
-            if (name.isEmpty()) name = "download"
+            // the server's own file name wins, like in Chrome; then the address; every name is made safe
+            val name = parseDisposition(contentDisposition)
+                ?: cleanFileName(URLUtil.guessFileName(url, contentDisposition, mimetype))
             val lower = name.lowercase()
-            if (lower.endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
-                toast("Blocked: Nirobo Browser does not download app files (.apk)")
-                return false
-            }
             val program = listOf(".exe", ".bat", ".cmd", ".msi", ".scr", ".jar", ".vbs", ".ps1", ".sh")
             if (store.dangerFiles && program.any { lower.endsWith(it) }) {
                 toast("Blocked: program files can harm your devices")
                 return false
             }
-            // Android 9 asks before a file is saved
-            if (Build.VERSION.SDK_INT < 29 &&
-                checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 702)
-                toast("Allow storage, then start the download again")
-                return false
-            }
-            // Android 13 and newer ask once, so the progress can show as a notification
-            if (Build.VERSION.SDK_INT >= 33 && !askedNotification &&
-                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-            ) {
-                askedNotification = true
-                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 701)
-            }
+            if (!askStoragePermission()) return false
             val ua = userAgent ?: (if (mobileUa.isNotEmpty()) mobileUa else "Mozilla/5.0 (Linux; Android) NiroboBrowser")
-            val req = DownloadManager.Request(Uri.parse(url))
-            if (!mimetype.isNullOrEmpty()) req.setMimeType(mimetype)
-            req.addRequestHeader("User-Agent", ua)
-            val cookie = CookieManager.getInstance().getCookie(url)
-            if (cookie != null) req.addRequestHeader("Cookie", cookie)
-            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-            val id = (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
-            if (!isPrivate) store.addDownload(id, name, url)
-            toast("Downloading $name")
+            val ext = name.substringAfterLast('.', "").lowercase()
+            val type = if (!mimetype.isNullOrEmpty() && mimetype != "application/octet-stream") mimetype
+            else (android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: mimetype ?: "")
+            val ref = referer ?: current?.web?.url ?: ""
+            val go = {
+                Downloader.init(this)
+                Downloader.enqueue(name, url, ua, ref, type, isPrivate)
+                toast("Downloading $name")
+            }
+            if (lower.endsWith(".apk") || mimetype == "application/vnd.android.package-archive") {
+                // like Chrome: an app file is allowed, but only after a warning
+                AlertDialog.Builder(this)
+                    .setTitle("This file can harm your phone")
+                    .setMessage("$name is an app file. Keep it only if you trust this website.")
+                    .setPositiveButton("Keep") { _, _ -> go() }
+                    .setNegativeButton("Discard", null)
+                    .show()
+                return true
+            }
+            go()
             return true
         } catch (e: Exception) {
             toast("Can't download this file")
@@ -856,60 +916,31 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    /** What the Downloads page shows: every saved download with its live state. */
+    /** What the Downloads page shows: every download with its live state, plus the storage numbers. */
     internal fun downloadsJson(): String {
-        val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val saved = store.downloads()
-        val out = org.json.JSONArray()
-        for (i in saved.length() - 1 downTo 0) {
-            val s = saved.optJSONObject(i) ?: continue
-            val id = s.optLong("id", -1L)
-            val o = org.json.JSONObject()
-            o.put("id", id.toString())
-            o.put("n", s.optString("n"))
-            o.put("u", s.optString("u"))
-            var status = "gone"
-            var got = 0L
-            var total = 0L
-            try {
-                dm.query(DownloadManager.Query().setFilterById(id))?.use { c ->
-                    if (c.moveToFirst()) {
-                        got = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                        total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                        status = when (c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
-                            DownloadManager.STATUS_SUCCESSFUL -> "done"
-                            DownloadManager.STATUS_FAILED -> "failed"
-                            DownloadManager.STATUS_PAUSED -> "paused"
-                            DownloadManager.STATUS_PENDING -> "waiting"
-                            else -> "running"
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                // keep "gone"
-            }
-            o.put("s", status)
-            o.put("got", got)
-            o.put("total", total)
-            out.put(o)
-        }
-        return out.toString()
+        Downloader.init(this)
+        return Downloader.snapshot(isPrivate)
+    }
+
+    internal fun clearDownloadList() {
+        Downloader.clearFinished(isPrivate)
+    }
+
+    internal fun copyDownloadLink(idText: String) {
+        val u = Downloader.find(idText.toLongOrNull() ?: return)?.url ?: return
+        if (u.isNotEmpty()) copyText("download link", u, "Link copied")
     }
 
     internal fun openDownload(idText: String) {
         val id = idText.toLongOrNull() ?: return
+        val d = Downloader.find(id) ?: return
         try {
-            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val uri = dm.getUriForDownloadedFile(id)
+            val uri = Downloader.uriFor(id)
             if (uri == null) {
                 toast("The file is not there anymore")
                 return
             }
-            val mime = dm.getMimeTypeForDownloadedFile(id) ?: "*/*"
-            if (mime == "application/vnd.android.package-archive") {
-                toast("App files are not opened from here")
-                return
-            }
+            val mime = if (d.mime.isEmpty()) "*/*" else d.mime
             val i = if (mime == "application/pdf") {
                 // PDF files open in Nirobo's own offline reader
                 Intent(this, PdfReaderActivity::class.java).setData(uri)
@@ -923,21 +954,38 @@ open class BrowserActivity : Activity() {
         }
     }
 
-    internal fun deleteDownload(idText: String) {
+    internal fun shareDownload(idText: String) {
         val id = idText.toLongOrNull() ?: return
-        try {
-            (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(id)
-        } catch (e: Exception) {
-            // already gone
+        val d = Downloader.find(id) ?: return
+        val uri = Downloader.uriFor(id)
+        if (uri == null) {
+            toast("The file is not there anymore")
+            return
         }
-        store.removeDownload(id)
+        try {
+            val send = Intent(Intent.ACTION_SEND)
+            send.type = if (d.mime.isEmpty()) "*/*" else d.mime
+            send.putExtra(Intent.EXTRA_STREAM, uri)
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(send, "Share"))
+        } catch (e: Exception) {
+            toast("Can't share this file")
+        }
     }
 
-    internal fun retryDownload(idText: String) {
+    /** Cancel, or delete the saved file. */
+    internal fun deleteDownload(idText: String) {
         val id = idText.toLongOrNull() ?: return
-        val url = store.downloadUrl(id)
-        deleteDownload(idText)
-        if (url.isNotEmpty()) enqueueDownload(url, null, null, null)
+        Downloader.remove(id, true)
+    }
+
+    internal fun pauseDownload(idText: String) {
+        Downloader.pause(idText.toLongOrNull() ?: return)
+    }
+
+    /** Resume, or retry after a failure: the download continues where it stopped. */
+    internal fun retryDownload(idText: String) {
+        Downloader.resume(idText.toLongOrNull() ?: return)
     }
 
     private fun newTab(input: String?, background: Boolean): Tab {
@@ -1382,7 +1430,7 @@ open class BrowserActivity : Activity() {
         if (!isSandbox) {
             add("Download $word") {
                 when {
-                    url.startsWith("blob:") -> toast("This $word is streamed in pieces and can't be saved directly")
+                    url.startsWith("blob:") -> current?.web?.let { saveBlob(it, url, null, if (kind == "audio") "audio/mpeg" else "video/mp4") }
                     low.endsWith(".m3u8") || low.endsWith(".mpd") -> toast("Live or streamed $word can't be saved directly")
                     else -> downloadMedia(url, if (kind == "audio") "audio/" else "video/", if (kind == "audio") "audio/mpeg" else "video/mp4")
                 }
@@ -1489,6 +1537,7 @@ open class BrowserActivity : Activity() {
         add("Reload") { reloadOrStop() }
         if (!t.isAbout) {
             add("Save as PDF or print") { printPage() }
+            if (!isSandbox) add("Download page") { downloadPage(t) }
             add("Share") {
                 val send = Intent(Intent.ACTION_SEND)
                 send.type = "text/plain"
