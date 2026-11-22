@@ -56,6 +56,12 @@ Flat repo: GitHub Actions (`.github/workflows/build.yml`) copies every `*.kt` in
 13. Sync/export: bookmarks + history import/export as HTML/JSON.
 14. Dark mode for web content (`WebSettings.setAlgorithmicDarkeningAllowed` is partly used; verify on API 33+).
 
+## Nov 22 (evening) - ads update
+- DONE: siteShield bug; `gamblingHost` regex (3rd-party gambling/betting hosts blocked); `ytAdUrl` + `isYoutube()` (YouTube ad calls blocked in `shouldInterceptRequest`); `YT_JS` (skip ads, hide ad cards + gambling / "unverified advertiser" cards) injected from `injectShieldScripts` on youtube.com only. Gated by `store.adHide` + `store.adPatterns` + per-site shield.
+- UNTESTED on a phone (cannot compile here). If YouTube changes class names, edit selectors inside `YT_JS`. Ads inside the YouTube video stream itself cannot be blocked by URL, only skipped by JS.
+- Repo can be cloned in the sandbox with plain `git clone https://github.com/bdelectrickbill21/nirobo-browser.git` (public, works); pushing is not possible, user uploads files by phone.
+- NEXT: audit items 2 (narrow adPattern), 3 (https fallback), 6 (bigger host list), 7 (AD_HIDE_JS observer).
+
 ## How to continue cheaply
 Open this file, pick the next item, edit only the functions named above (use grep for the function name, don't read whole files), update "Done so far" when finished.
 
