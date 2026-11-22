@@ -219,6 +219,66 @@ internal class Store(ctx: Context) {
         p.edit().putString("history", "[]").apply()
     }
 
+    // ---------------- session restore and recently closed tabs ----------------
+
+    /** Open the tabs from last time when the app starts, like Chrome does. */
+    var restoreTabs: Boolean
+        get() = p.getBoolean("restore_tabs", true)
+        set(v) = p.edit().putBoolean("restore_tabs", v).apply()
+
+    fun saveSession(urls: List<String>, index: Int) {
+        val a = JSONArray()
+        for (u in urls) a.put(u)
+        p.edit().putString("session", a.toString()).putInt("session_i", index).apply()
+    }
+
+    fun sessionUrls(): List<String> = try {
+        val a = JSONArray(p.getString("session", "[]") ?: "[]")
+        (0 until a.length()).map { a.optString(it) }.filter { it.isNotEmpty() }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    fun sessionIndex(): Int = p.getInt("session_i", 0)
+
+    fun closedTabs(): JSONArray = try {
+        JSONArray(p.getString("closed_tabs", "[]") ?: "[]")
+    } catch (e: Exception) {
+        JSONArray()
+    }
+
+    /** Newest first, at most 10, no repeats. */
+    fun pushClosed(url: String, title: String) {
+        if (url.isEmpty() || url == "about:blank" || url == homeUrl) return
+        val a = closedTabs()
+        val out = JSONArray()
+        val o = JSONObject()
+        o.put("u", url)
+        o.put("t", if (title.isEmpty()) url else title)
+        out.put(o)
+        for (i in 0 until a.length()) {
+            if (out.length() >= 10) break
+            val e = a.optJSONObject(i) ?: continue
+            if (e.optString("u") != url) out.put(e)
+        }
+        p.edit().putString("closed_tabs", out.toString()).apply()
+    }
+
+    /** Takes the newest closed tab off the list and returns its address (null when there is none). */
+    fun popClosed(): String? {
+        val a = closedTabs()
+        if (a.length() == 0) return null
+        val first = a.optJSONObject(0)?.optString("u")
+        val out = JSONArray()
+        for (i in 1 until a.length()) a.optJSONObject(i)?.let { out.put(it) }
+        p.edit().putString("closed_tabs", out.toString()).apply()
+        return first
+    }
+
+    fun clearClosed() {
+        p.edit().putString("closed_tabs", "[]").apply()
+    }
+
     // ---------------- downloads ----------------
 
     fun downloads(): JSONArray = try {

@@ -43,7 +43,10 @@ import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.ArrayAdapter
+import android.widget.AutoCompleteTextView
 import android.widget.EditText
+import android.widget.Filter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -67,7 +70,29 @@ internal class Tab(val web: WebView) {
     var desktop: Boolean = false
     var reader: Boolean = false
     var isAbout: Boolean = false
+    /** A restored tab waits here and only loads when you open it, to save memory and data. */
+    var pending: String? = null
     @Volatile var host: String = ""
+}
+
+/** Address bar suggestions: the list is rebuilt for every letter you type. */
+private class SuggestAdapter(ctx: Context, private val source: (String) -> List<String>) :
+    ArrayAdapter<String>(ctx, android.R.layout.simple_dropdown_item_1line, ArrayList<String>()) {
+    override fun getFilter(): Filter = object : Filter() {
+        override fun performFiltering(c: CharSequence?): FilterResults {
+            val r = FilterResults()
+            val list = if (c.isNullOrBlank()) emptyList() else source(c.toString())
+            r.values = list
+            r.count = list.size
+            return r
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        override fun publishResults(c: CharSequence?, r: FilterResults) {
+            clear()
+            addAll((r.values as? List<String>) ?: emptyList())
+        }
+    }
 }
 
 /**
@@ -161,8 +186,66 @@ open class BrowserActivity : Activity() {
             NewsSaver.saveIfDue(this) { }
         }
         val data = intent?.dataString
-        newTab(if (isWebAddress(data)) data else startUrl, false)
+        // like Chrome: bring back last time's tabs, then open a tapped link on top of them
+        val restored = !isPrivate && !isSandbox && restoreSession()
+        if (isWebAddress(data) || !restored) newTab(if (isWebAddress(data)) data else startUrl, false)
         handleWidget(intent)
+    }
+
+    /** Opens the tabs that were open when the app was last left. Only the tab you were on loads right away. */
+    private fun restoreSession(): Boolean {
+        if (!store.restoreTabs) return false
+        val urls = store.sessionUrls()
+        if (urls.isEmpty()) return false
+        val keep = store.sessionIndex().coerceIn(0, urls.size - 1)
+        var chosen: Tab? = null
+        for ((i, u) in urls.withIndex()) {
+            val t = createTab()
+            tabs.add(t)
+            t.url = u
+            t.title = u
+            t.pending = u
+            if (i == keep) chosen = t
+        }
+        chosen?.let { switchTo(it) }
+        updateTabCount()
+        return true
+    }
+
+    private fun saveSession() {
+        if (isPrivate || isSandbox) return
+        val urls = tabs.map { it.url }.filter { it.isNotEmpty() }
+        if (urls.isEmpty()) return
+        val c = current
+        val pos = if (c == null) -1 else tabs.indexOf(c)
+        val idx = if (pos < 0) 0 else tabs.take(pos).count { it.url.isNotEmpty() }
+        store.saveSession(urls, idx)
+    }
+
+    /** Menu: bring back the tab you closed last. */
+    private fun reopenClosedTab() {
+        val u = store.popClosed()
+        if (u == null) toast("No recently closed tabs") else newTab(u, false)
+    }
+
+    /** Matches for the address bar: bookmarks first, then history. Runs off the main thread. */
+    private fun suggestionsFor(q: String): List<String> {
+        val s = q.trim().lowercase()
+        if (s.isEmpty()) return emptyList()
+        val out = LinkedHashSet<String>()
+        fun scan(a: org.json.JSONArray) {
+            for (i in 0 until a.length()) {
+                if (out.size >= 40) return
+                val o = a.optJSONObject(i) ?: continue
+                val u = o.optString("u")
+                if (u.isEmpty() || u.startsWith("about:")) continue
+                if (u.lowercase().contains(s) || o.optString("t").lowercase().contains(s)) out.add(u)
+            }
+        }
+        scan(store.bookmarks())
+        scan(store.history())
+        fun bare(u: String) = u.removePrefix("https://").removePrefix("http://").lowercase()
+        return out.sortedBy { if (bare(it).startsWith(s) || bare(it).startsWith("www.$s")) 0 else 1 }.take(6)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -218,7 +301,25 @@ open class BrowserActivity : Activity() {
         top.setBackgroundColor(barColor)
         top.setPadding(dp(8), dp(6), dp(8), dp(6))
 
-        addr = EditText(this)
+        // the address bar suggests bookmarks and history as you type (never in private or sandbox windows)
+        val omni = object : AutoCompleteTextView(this@BrowserActivity) {
+            // only while you are typing in it, not when a page sets the address
+            override fun enoughToFilter(): Boolean = hasFocus() && super.enoughToFilter()
+        }
+        addr = omni
+        omni.threshold = 1
+        if (!isPrivate && !isSandbox) {
+            val sug = SuggestAdapter(this@BrowserActivity) { suggestionsFor(it) }
+            omni.setAdapter(sug)
+            omni.setOnItemClickListener { _, _, pos, _ ->
+                val picked = sug.getItem(pos)
+                if (picked != null) {
+                    go(picked)
+                    hideKeyboard()
+                }
+            }
+        }
+        omniBox = omni
         addr.setSingleLine(true)
         addr.hint = if (isSandbox) "Sandbox: type an address" else if (isPrivate) "Private: search or type address" else "Search or type address"
         addr.textSize = 15f
@@ -849,11 +950,17 @@ open class BrowserActivity : Activity() {
         bar.visibility = if (t.progress in 1..99) View.VISIBLE else View.GONE
         updateTabCount()
         t.web.requestFocus()
+        // a restored tab loads the first time you open it
+        t.pending?.let {
+            t.pending = null
+            loadInto(t, it)
+        }
     }
 
     private fun closeTab(t: Tab) {
         val i = tabs.indexOf(t)
         if (i < 0) return
+        if (!isPrivate && !isSandbox) store.pushClosed(t.url, t.title)
         tabs.removeAt(i)
         (t.web.parent as? ViewGroup)?.removeView(t.web)
         t.web.stopLoading()
@@ -874,6 +981,7 @@ open class BrowserActivity : Activity() {
 
     private fun closeAll() {
         for (t in ArrayList(tabs)) {
+            if (!isPrivate && !isSandbox) store.pushClosed(t.url, t.title)
             (t.web.parent as? ViewGroup)?.removeView(t.web)
             t.web.destroy()
         }
@@ -1379,7 +1487,10 @@ open class BrowserActivity : Activity() {
         NewsSaver.save(this) { ok -> done(ok) }
     }
 
+    private var omniBox: AutoCompleteTextView? = null
+
     private fun hideKeyboard() {
+        omniBox?.dismissDropDown()
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(addr.windowToken, 0)
         current?.web?.requestFocus()
@@ -1503,6 +1614,7 @@ open class BrowserActivity : Activity() {
         divider()
 
         item("\uFF0B", "New tab", "") { newTab(startUrl, false) }
+        if (!isPrivate && !isSandbox) item("\u21BA", "Reopen closed tab", "") { reopenClosedTab() }
         if (!isPrivate) item("\uD83D\uDD76", "New private tab", "") { openPrivate(null) }
         divider()
         if (!isPrivate) {
@@ -1781,6 +1893,7 @@ open class BrowserActivity : Activity() {
         CookieManager.getInstance().flush()
         WebStorage.getInstance().deleteAllData()
         store.clearHistory()
+        store.clearClosed()
         toast("Cleared")
     }
 
@@ -1973,6 +2086,7 @@ open class BrowserActivity : Activity() {
 
     override fun onPause() {
         if (!isPrivate) CookieManager.getInstance().flush()
+        saveSession()
         current?.web?.onPause()
         super.onPause()
     }
