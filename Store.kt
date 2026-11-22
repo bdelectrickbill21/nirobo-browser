@@ -140,6 +140,36 @@ internal class Store(ctx: Context) {
         p.edit().putString("sites", m.toString()).apply()
     }
 
+    // ---------------- per-site permissions (camera, microphone, location) ----------------
+
+    private fun permMap(): JSONObject = try {
+        JSONObject(p.getString("sitePerms", "{}") ?: "{}")
+    } catch (e: Exception) {
+        JSONObject()
+    }
+
+    /** "allow", "deny" or "" (not asked yet) for kind "cam", "mic" or "loc" on this host. */
+    fun sitePerm(host: String, kind: String): String = try {
+        permMap().optJSONObject(host)?.optString(kind, "") ?: ""
+    } catch (e: Exception) {
+        ""
+    }
+
+    fun setSitePerm(host: String, kind: String, value: String) {
+        val m = permMap()
+        try {
+            val o = m.optJSONObject(host) ?: JSONObject()
+            if (value.isEmpty()) o.remove(kind) else o.put(kind, value)
+            m.put(host, o)
+        } catch (e: Exception) {
+        }
+        p.edit().putString("sitePerms", m.toString()).apply()
+    }
+
+    fun clearSitePerms() {
+        p.edit().remove("sitePerms").apply()
+    }
+
     // ---------------- bookmarks ----------------
 
     /** Search engines the person added: [{id, name, url, icon}] */

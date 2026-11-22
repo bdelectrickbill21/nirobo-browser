@@ -100,3 +100,9 @@ Principles: zero telemetry, no accounts, no extensions (extensions are how email
 - **MENU RULE: add at most ONE new item to the 3-line menu: "Apps & Spaces" (opens `about:apps`).** Space switching, app tiles, mail settings live inside that page. Do not add other menu items.
 - Overcoming limits: (a) calls -> per-site camera/mic/location prompt (roadmap 5) FIRST, remember choice per origin in Store; (b) notifications -> no Web Push in WebView; instead keep the tab alive with a foreground service and turn title counters like "(3) WhatsApp" / unread badges (`onReceivedTitle`) into local notifications; works only while app is running, say so; (c) sender check -> on mail sites read From name + address from the page, warn if brand in name != address domain or lookalike (paypa1, g00gle, punycode); link inspector as planned.
 - Order now: 1 permission prompt, 2 Spaces, 3 `about:apps` + 1 menu item, 4 title->notification, 5 mail inspector, 6 blocklist additions.
+
+## Nov 23: step 1 DONE (per-site permission prompt) - UNBUILT, check build log first
+- `Store.sitePerm/setSitePerm/clearSitePerms` (key `sitePerms`, JSON host -> {cam,mic,loc: allow|deny}).
+- MainActivity: `askSite` dialog (Allow / Only this time / Block; private = no remembering, sandbox = always deny, https only), `handleSitePermission`, `grantSite`, `handleSiteLocation`, `grantLocation`, `onRequestPermissionsResult` (codes 710 cam/mic, 711 location). Manifest: CAMERA, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS, ACCESS_FINE/COARSE_LOCATION + optional uses-feature.
+- Still missing: a manager page to review/reset saved site permissions (call `store.clearSitePerms()` from "Clear browsing data" and add a list on about:settings later); notifications permission per site.
+- NEXT: step 2 Spaces (Personal/Work).

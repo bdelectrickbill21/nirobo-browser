@@ -772,11 +772,11 @@ open class BrowserActivity : Activity() {
             }
 
             override fun onPermissionRequest(request: PermissionRequest) {
-                request.deny()
+                runOnUiThread { handleSitePermission(request) }
             }
 
             override fun onGeolocationPermissionsShowPrompt(origin: String, callback: GeolocationPermissions.Callback) {
-                callback.invoke(origin, false, false)
+                runOnUiThread { handleSiteLocation(origin, callback) }
             }
 
             override fun onShowFileChooser(
@@ -814,6 +814,192 @@ open class BrowserActivity : Activity() {
             }
         }
         return t
+    }
+
+    // ---------- site permissions (camera, microphone, location) ----------
+    // Each website asks through our own prompt. "Allow" / "Block" are remembered per site (never in
+    // private windows); the sandbox always says no. Android's own permission is asked only after Allow.
+
+    private var pendingPermRequest: PermissionRequest? = null
+    private var pendingPermResources: Array<String> = emptyArray()
+    private var pendingGeoCb: GeolocationPermissions.Callback? = null
+    private var pendingGeoOrigin: String = ""
+
+    private fun osGranted(p: String): Boolean = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+
+    /** Result: 2 = allow and remember, 1 = allow this time, 0 = block and remember, -1 = block this time. */
+    private fun askSite(host: String, what: String, result: (Int) -> Unit) {
+        if (isFinishing) {
+            result(-1)
+            return
+        }
+        var done = false
+        fun decide(c: Int) {
+            if (done) return
+            done = true
+            result(c)
+        }
+        val b = AlertDialog.Builder(this)
+            .setTitle("Allow $what?")
+            .setMessage("$host wants to use your $what.")
+            .setOnCancelListener { decide(-1) }
+        if (isPrivate) {
+            b.setPositiveButton("Allow") { _, _ -> decide(1) }
+            b.setNegativeButton("Block") { _, _ -> decide(-1) }
+        } else {
+            b.setPositiveButton("Allow") { _, _ -> decide(2) }
+            b.setNeutralButton("Only this time") { _, _ -> decide(1) }
+            b.setNegativeButton("Block") { _, _ -> decide(0) }
+        }
+        try {
+            b.show()
+        } catch (e: Exception) {
+            decide(-1)
+        }
+    }
+
+    private fun handleSitePermission(request: PermissionRequest) {
+        val origin = request.origin
+        val host = origin.host ?: ""
+        if (isSandbox || origin.scheme != "https" || host.isEmpty()) {
+            request.deny()
+            return
+        }
+        val kinds = ArrayList<String>()
+        val res = ArrayList<String>()
+        for (r in request.resources) {
+            if (r == PermissionRequest.RESOURCE_VIDEO_CAPTURE) {
+                kinds.add("cam")
+                res.add(r)
+            } else if (r == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
+                kinds.add("mic")
+                res.add(r)
+            }
+        }
+        if (kinds.isEmpty()) {
+            request.deny()
+            return
+        }
+        if (kinds.any { store.sitePerm(host, it) == "deny" }) {
+            request.deny()
+            return
+        }
+        if (kinds.all { store.sitePerm(host, it) == "allow" }) {
+            grantSite(request, res)
+            return
+        }
+        val what = if (kinds.size == 2) "camera and microphone" else if (kinds[0] == "cam") "camera" else "microphone"
+        askSite(host, what) { c ->
+            when (c) {
+                2 -> {
+                    kinds.forEach { store.setSitePerm(host, it, "allow") }
+                    grantSite(request, res)
+                }
+                1 -> grantSite(request, res)
+                0 -> {
+                    kinds.forEach { store.setSitePerm(host, it, "deny") }
+                    request.deny()
+                }
+                else -> request.deny()
+            }
+        }
+    }
+
+    /** The website may use it; Android must also allow Nirobo itself, so ask for that now if needed. */
+    private fun grantSite(request: PermissionRequest, res: List<String>) {
+        val need = ArrayList<String>()
+        if (res.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE) && !osGranted(android.Manifest.permission.CAMERA)) {
+            need.add(android.Manifest.permission.CAMERA)
+        }
+        if (res.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE) && !osGranted(android.Manifest.permission.RECORD_AUDIO)) {
+            need.add(android.Manifest.permission.RECORD_AUDIO)
+        }
+        if (need.isEmpty()) {
+            try {
+                request.grant(res.toTypedArray())
+            } catch (e: Exception) {
+            }
+            return
+        }
+        try {
+            pendingPermRequest?.deny()
+        } catch (e: Exception) {
+        }
+        pendingPermRequest = request
+        pendingPermResources = res.toTypedArray()
+        requestPermissions(need.toTypedArray(), 710)
+    }
+
+    private fun handleSiteLocation(origin: String, cb: GeolocationPermissions.Callback) {
+        val host = hostOf(origin)
+        if (isSandbox || !origin.startsWith("https://") || host.isEmpty()) {
+            cb.invoke(origin, false, false)
+            return
+        }
+        when (store.sitePerm(host, "loc")) {
+            "deny" -> cb.invoke(origin, false, false)
+            "allow" -> grantLocation(origin, cb)
+            else -> askSite(host, "location") { c ->
+                when (c) {
+                    2 -> {
+                        store.setSitePerm(host, "loc", "allow")
+                        grantLocation(origin, cb)
+                    }
+                    1 -> grantLocation(origin, cb)
+                    0 -> {
+                        store.setSitePerm(host, "loc", "deny")
+                        cb.invoke(origin, false, false)
+                    }
+                    else -> cb.invoke(origin, false, false)
+                }
+            }
+        }
+    }
+
+    private fun grantLocation(origin: String, cb: GeolocationPermissions.Callback) {
+        if (osGranted(android.Manifest.permission.ACCESS_FINE_LOCATION) ||
+            osGranted(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        ) {
+            cb.invoke(origin, true, false)
+            return
+        }
+        try {
+            pendingGeoCb?.invoke(pendingGeoOrigin, false, false)
+        } catch (e: Exception) {
+        }
+        pendingGeoCb = cb
+        pendingGeoOrigin = origin
+        requestPermissions(
+            arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION),
+            711
+        )
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 710) {
+            val r = pendingPermRequest
+            pendingPermRequest = null
+            if (r != null) {
+                val ok = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+                try {
+                    if (ok) r.grant(pendingPermResources) else r.deny()
+                } catch (e: Exception) {
+                }
+                if (!ok) toast("Allow it in Android settings to use it here")
+            }
+        } else if (requestCode == 711) {
+            val cb = pendingGeoCb
+            pendingGeoCb = null
+            if (cb != null) {
+                val ok = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+                try {
+                    cb.invoke(pendingGeoOrigin, ok, false)
+                } catch (e: Exception) {
+                }
+                if (!ok) toast("Allow location in Android settings to use it here")
+            }
+        }
     }
 
     // ---------- downloads ----------
