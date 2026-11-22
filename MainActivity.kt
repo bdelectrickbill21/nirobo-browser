@@ -640,9 +640,20 @@ open class BrowserActivity : Activity() {
                 if (isSandbox && !sameSite(host, t.host)) return blockedResponse(t)
                 // local network shield: a website may not poke at your router or other devices
                 if (store.localShield && isPrivateHost(host) && !isPrivateHost(t.host)) return blockedResponse(t)
-                if (!store.siteShield(host)) return null
+                // per-site switch belongs to the PAGE the user is on, not to the file being loaded
+                if (!store.siteShield(t.host)) return null
                 // layer 1: the list of ad and tracker sites
                 if (isBlocked(host)) return blockedResponse(t)
+                // gambling / betting sites loaded as ads inside other pages
+                if (store.adPatterns && !sameSite(host, t.host) && gamblingHost.containsMatchIn(host.lowercase())) {
+                    return blockedResponse(t)
+                }
+                // YouTube ad calls (same site as the video, so layer 2 skips them)
+                if (store.adPatterns && isYoutube(t.host) && isYoutube(host) &&
+                    ytAdUrl.containsMatchIn(request.url.toString().lowercase())
+                ) {
+                    return blockedResponse(t)
+                }
                 // layer 2: ad addresses, only for files that come from another site
                 if (store.adPatterns && !sameSite(host, t.host) &&
                     adPattern.containsMatchIn(request.url.toString().lowercase())
@@ -2134,6 +2145,12 @@ open class BrowserActivity : Activity() {
 
     // ---------- protection layers ----------
 
+    private val gamblingHost = Regex("(casino|1xbet|melbet|mostbet|parimatch|bet365|betway|22bet|linebet|megapari|jackpot|sportsbet|pinup|1win)")
+    private val ytAdUrl = Regex("(/pagead/|/api/stats/ads|/ptracking|/get_midroll|ad_break|/youtubei/v1/player/ad_break|[?&]adformat=|doubleclick)")
+    private fun isYoutube(h: String?): Boolean {
+        val x = h?.lowercase() ?: return false
+        return x == "youtube.com" || x.endsWith(".youtube.com") || x == "youtu.be"
+    }
     private val adPattern = Regex("(/ads?/|/adserver|/adframe|/adview|/banners?/|pagead|adsbygoogle|doubleclick|googlesyndication|/prebid|adservice|/advert)")
 
     private val trackParams = setOf(
@@ -2180,6 +2197,7 @@ open class BrowserActivity : Activity() {
     private fun injectShieldScripts(view: WebView, t: Tab) {
         if (t.isAbout) return
         if (store.siteShield(t.host) && store.adHide) view.evaluateJavascript(AD_HIDE_JS, null)
+        if (store.siteShield(t.host) && store.adHide && isYoutube(t.host)) view.evaluateJavascript(YT_JS, null)
         if (store.popupBlock) view.evaluateJavascript(POPUP_JS, null)
     }
 
@@ -2348,6 +2366,51 @@ open class BrowserActivity : Activity() {
             '{display:none!important}';
           var s=document.createElement('style');s.textContent=css;
           (document.head||document.documentElement).appendChild(s);
+        })();
+        """
+
+        /**
+         * YouTube: skips video ads, hides ad boxes and "sponsored" cards, and hides cards
+         * that look like gambling / betting adverts or "unverified advertiser" notices.
+         * Runs on youtube.com pages only; it keeps checking because YouTube changes pages without reloading.
+         */
+        private const val YT_JS = """
+        (function(){
+          if(window.__nirobo_yt)return; window.__nirobo_yt=1;
+          var css='#player-ads,#masthead-ad,ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,'+
+            'ytd-display-ad-renderer,ytd-promoted-sparkles-web-renderer,ytd-promoted-video-renderer,'+
+            'ytd-banner-promo-renderer,ytd-statement-banner-renderer,ytd-companion-slot-renderer,'+
+            '.ytp-ad-overlay-container,.ytp-ad-module,.ytp-ad-image-overlay,'+
+            '.ytm-promoted-sparkles-web-renderer,ytm-promoted-video-renderer,ytm-companion-ad-renderer,'+
+            '.video-ads,ad-slot-renderer,.ytd-ad-slot-renderer{display:none!important}';
+          var s=document.createElement('style');s.textContent=css;
+          (document.head||document.documentElement).appendChild(s);
+          var bad=/(casino|betting|bet365|1xbet|melbet|mostbet|parimatch|jackpot|slots|sportsbook|unverified advertiser|advertiser verification|not verified)/i;
+          function tick(){
+            try{
+              var v=document.querySelector('video.html5-main-video')||document.querySelector('video');
+              var p=document.querySelector('.html5-video-player');
+              var ad=p&&(p.classList.contains('ad-showing')||p.classList.contains('ad-interrupting'));
+              if(ad&&v){
+                v.muted=true;
+                if(isFinite(v.duration)&&v.duration>0){v.currentTime=v.duration;}
+                v.playbackRate=16;
+              }
+              var sk=document.querySelectorAll('.ytp-ad-skip-button,.ytp-ad-skip-button-modern,.ytp-skip-ad-button,button[class*="skip-button"]');
+              for(var i=0;i<sk.length;i++){try{sk[i].click();}catch(e){}}
+              var cl=document.querySelectorAll('.ytp-ad-overlay-close-button,.ytp-ad-text-overlay .ytp-ad-overlay-close-button');
+              for(var j=0;j<cl.length;j++){try{cl[j].click();}catch(e){}}
+              var cards=document.querySelectorAll('ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,ytd-display-ad-renderer,ytd-promoted-sparkles-web-renderer,ytm-promoted-video-renderer,.ytp-ad-module,.ytp-ad-player-overlay,ytd-companion-slot-renderer');
+              for(var k=0;k<cards.length;k++){
+                var c=cards[k];
+                if(c.style.display==='none')continue;
+                if(bad.test(c.innerText||'')){c.style.setProperty('display','none','important');}
+              }
+              if(ad&&p&&bad.test(p.innerText||'')&&v){v.pause();v.currentTime=isFinite(v.duration)?v.duration:0;}
+            }catch(e){}
+          }
+          setInterval(tick,300);
+          tick();
         })();
         """
 
