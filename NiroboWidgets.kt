@@ -13,12 +13,30 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Home screen widgets. Every widget is one card: an icon, a title and a line of text.
- * A tap opens Nirobo Browser and does the job named by [action].
+ * Home screen widgets. All of them are small (one row high).
+ *
+ * - Card widgets (battery, speed, news, voice): an icon, a title and a line of text. One tap = one job.
+ * - Search box: type or tap the microphone, in one widget.
+ * - Quick bar: six buttons in a row (search, voice, new tab, private tab, downloads, bookmarks).
+ *
+ * A tap opens Nirobo Browser and does the job named by an action word
+ * (MainActivity.handleWidget understands these words).
  */
+
+/** The tap that opens the browser and says what to do. Each action word gets its own PendingIntent. */
+internal fun widgetTap(ctx: Context, action: String): PendingIntent {
+    val i = Intent(ctx, MainActivity::class.java)
+    i.putExtra("nirobo_widget", action)
+    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    return PendingIntent.getActivity(
+        ctx, action.hashCode(), i,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+}
+
 internal abstract class NiroboWidget : AppWidgetProvider() {
 
-    /** The job the browser does after a tap (MainActivity understands these names). */
+    /** The job the browser does after a tap. */
     abstract val action: String
     abstract fun icon(ctx: Context): String
     abstract fun title(ctx: Context): String
@@ -50,30 +68,51 @@ internal abstract class NiroboWidget : AppWidgetProvider() {
         v.setTextViewText(R.id.w_icon, icon(ctx))
         v.setTextViewText(R.id.w_title, title(ctx))
         v.setTextViewText(R.id.w_sub, subtitle(ctx))
-        val i = Intent(ctx, MainActivity::class.java)
-        i.putExtra("nirobo_widget", action)
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val pi = PendingIntent.getActivity(
-            ctx, action.hashCode(), i,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        v.setOnClickPendingIntent(R.id.w_root, pi)
+        v.setOnClickPendingIntent(R.id.w_root, widgetTap(ctx, action))
         return v
     }
 }
 
-/** A search box: tap and the keyboard opens. */
-internal class SearchWidget : NiroboWidget() {
-    override val action = "search"
-    override fun icon(ctx: Context) = "\uD83D\uDD0D"
-    override fun title(ctx: Context) = "Search with Nirobo"
-    override fun subtitle(ctx: Context) = "Tap to type"
+/** A search box with a microphone inside: tap the box to type, tap the microphone to speak. */
+internal class SearchWidget : AppWidgetProvider() {
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        for (id in appWidgetIds) {
+            val v = RemoteViews(context.packageName, R.layout.widget_searchbox)
+            v.setTextViewText(R.id.w_sbox, "🔍  Search with Nirobo")
+            v.setTextViewText(R.id.w_smic, "🎤")
+            v.setOnClickPendingIntent(R.id.w_sbox, widgetTap(context, "search"))
+            v.setOnClickPendingIntent(R.id.w_smic, widgetTap(context, "voice"))
+            appWidgetManager.updateAppWidget(id, v)
+        }
+    }
+}
+
+/** Six quick buttons in one row. */
+internal class QuickBarWidget : AppWidgetProvider() {
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        val buttons = listOf(
+            Triple(R.id.b_1, "🔍", "search"),
+            Triple(R.id.b_2, "🎤", "voice"),
+            Triple(R.id.b_3, "＋", "newtab"),
+            Triple(R.id.b_4, "🕶", "private"),
+            Triple(R.id.b_5, "↓", "downloads"),
+            Triple(R.id.b_6, "★", "bookmarks")
+        )
+        for (id in appWidgetIds) {
+            val v = RemoteViews(context.packageName, R.layout.widget_bar)
+            for ((view, glyph, act) in buttons) {
+                v.setTextViewText(view, glyph)
+                v.setOnClickPendingIntent(view, widgetTap(context, act))
+            }
+            appWidgetManager.updateAppWidget(id, v)
+        }
+    }
 }
 
 /** Voice assistant: tap and speak. */
 internal class AssistantWidget : NiroboWidget() {
     override val action = "voice"
-    override fun icon(ctx: Context) = "\uD83C\uDFA4"
+    override fun icon(ctx: Context) = "🎤"
     override fun title(ctx: Context) = "Voice search"
     override fun subtitle(ctx: Context) = "Tap and speak"
 }
@@ -95,7 +134,7 @@ internal class ChargeWidget : NiroboWidget() {
         return Pair(pct, text)
     }
 
-    override fun icon(ctx: Context) = if (battery(ctx).second == "Charging") "\u26A1" else "\uD83D\uDD0B"
+    override fun icon(ctx: Context) = if (battery(ctx).second == "Charging") "⚡" else "🔋"
     override fun title(ctx: Context) = "Battery " + battery(ctx).first + "%"
     override fun subtitle(ctx: Context) = battery(ctx).second + " - tap for details"
 }
@@ -103,9 +142,9 @@ internal class ChargeWidget : NiroboWidget() {
 /** Internet speed test. */
 internal class SpeedWidget : NiroboWidget() {
     override val action = "speed"
-    override fun icon(ctx: Context) = "\uD83D\uDE80"
+    override fun icon(ctx: Context) = "🚀"
     override fun title(ctx: Context) = "Internet speed"
-    override fun subtitle(ctx: Context) = "Tap to run a speed test"
+    override fun subtitle(ctx: Context) = "Tap to run a test"
 }
 
 /** The newest saved headline. */
@@ -123,7 +162,7 @@ internal class NewsWidget : NiroboWidget() {
         }
     }
 
-    override fun icon(ctx: Context) = "\uD83D\uDCF0"
+    override fun icon(ctx: Context) = "📰"
     override fun title(ctx: Context): String {
         val t = saved(ctx).first
         return if (t.isEmpty()) "Saved news" else t
@@ -131,6 +170,6 @@ internal class NewsWidget : NiroboWidget() {
 
     override fun subtitle(ctx: Context): String {
         val n = saved(ctx).second
-        return if (n == 0) "Open the browser once to save the news" else "$n saved stories - works offline"
+        return if (n == 0) "Open the browser once to save the news" else "$n stories - works offline"
     }
 }

@@ -74,6 +74,17 @@
 
         <!-- home screen widgets -->
         <receiver
+            android:name=".QuickBarWidget"
+            android:exported="true"
+            android:label="Nirobo quick bar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_bar" />
+        </receiver>
+        <receiver
             android:name=".SearchWidget"
             android:exported="true"
             android:label="Nirobo search">

@@ -25,6 +25,7 @@ import android.os.Message
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -269,7 +270,34 @@ open class BrowserActivity : Activity() {
             "charge" -> current?.let { loadInto(it, "about:phone") }
             "speed" -> current?.let { loadInto(it, "about:internet") }
             "news" -> current?.let { loadInto(it, "about:news") }
+            "newtab" -> newTab(startUrl, false)
+            "private" -> if (!isPrivate && !isSandbox) openPrivate(null)
+            "downloads" -> current?.let { loadInto(it, "about:downloads") }
+            "bookmarks" -> current?.let { loadInto(it, "about:bookmarks") }
+            "history" -> current?.let { loadInto(it, "about:history") }
         }
+    }
+
+    /** Menu: puts this page on the phone's home screen as an icon, like Chrome. */
+    private fun addToHomeScreen(t: Tab) {
+        val url = t.web.url ?: t.url
+        if (url.isEmpty() || url.startsWith("about:") || !url.startsWith("https://")) {
+            toast("Only secure web pages can be added")
+            return
+        }
+        val sm = getSystemService(android.content.pm.ShortcutManager::class.java)
+        if (sm == null || !sm.isRequestPinShortcutSupported) {
+            toast("Your home screen does not allow this")
+            return
+        }
+        val open = Intent(Intent.ACTION_VIEW, Uri.parse(url), this, MainActivity::class.java)
+        val label = (if (t.title.isEmpty() || t.title == url) hostOf(url) else t.title).take(24)
+        val info = android.content.pm.ShortcutInfo.Builder(this, "page_" + url.hashCode())
+            .setShortLabel(label)
+            .setIcon(android.graphics.drawable.Icon.createWithResource(this, applicationInfo.icon))
+            .setIntent(open)
+            .build()
+        sm.requestPinShortcut(info, null)
     }
 
     private fun isWebAddress(s: String?): Boolean =
@@ -523,6 +551,36 @@ open class BrowserActivity : Activity() {
         // A real website must never be able to reach it, or it could read your
         // bookmarks and history.
         w.setOnLongClickListener { v -> onLongPress(v as WebView) }
+        // remembers where the finger is (to find the picture or video under a long press)
+        // and gives Chrome's pull-down-to-refresh when the page is at the very top
+        w.setOnTouchListener { v, e ->
+            val web = v as WebView
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    touchX = e.x
+                    touchY = e.y
+                    pullStartY = if (web.scrollY == 0 && fullView == null) e.y else -1f
+                    pullStartX = e.x
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    touchX = e.x
+                    touchY = e.y
+                }
+                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL -> pullStartY = -1f
+                MotionEvent.ACTION_UP -> {
+                    val down = e.y - pullStartY
+                    val side = Math.abs(e.x - pullStartX)
+                    if (pullStartY >= 0f && down > dp(140) && side < down / 2 &&
+                        web.scrollY == 0 && current?.web === web && fullView == null
+                    ) {
+                        toast("Refreshing…")
+                        web.reload()
+                    }
+                    pullStartY = -1f
+                }
+            }
+            false
+        }
 
         w.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -1264,6 +1322,118 @@ open class BrowserActivity : Activity() {
 
     // ---------- links (long press) ----------
 
+    private var touchX = 0f
+    private var touchY = 0f
+    private var pullStartY = -1f
+    private var pullStartX = 0f
+
+    /**
+     * Looks at what is under the finger: a video, a sound, a picture (also a CSS background).
+     * Players put a see-through layer on top of the video, so videos are also found by position.
+     * Calls [done] with (kind, address, poster) or null when there is nothing to save.
+     */
+    @Suppress("DEPRECATION")
+    private fun probeMedia(w: WebView, done: (Triple<String, String, String>?) -> Unit) {
+        val sc = if (w.scale > 0f) w.scale else resources.displayMetrics.density
+        val x = (touchX / sc).toInt()
+        val y = (touchY / sc).toInt()
+        val js = "(function(x,y){" +
+            "function pick(n){var t=n.tagName;" +
+            "if(t=='VIDEO'||t=='AUDIO'){var u=n.currentSrc||n.src||'';" +
+            "if(!u){var s=n.querySelector('source');if(s)u=s.src;}" +
+            "return JSON.stringify({k:t.toLowerCase(),u:u,p:n.poster||''});}" +
+            "if(t=='IMG'){return JSON.stringify({k:'img',u:n.currentSrc||n.src||'',p:''});}" +
+            "return null;}" +
+            "var el=document.elementFromPoint(x,y);if(!el)return '';" +
+            "for(var n=el,i=0;n&&i<6;n=n.parentElement,i++){var r=pick(n);if(r)return r;}" +
+            "var vs=document.querySelectorAll('video,audio');" +
+            "for(var j=0;j<vs.length;j++){var b=vs[j].getBoundingClientRect();" +
+            "if(x>=b.left&&x<=b.right&&y>=b.top&&y<=b.bottom)return pick(vs[j]);}" +
+            "var bg=getComputedStyle(el).backgroundImage||'';" +
+            "var m=/url\\([\"']?([^\"')]+)/.exec(bg);" +
+            "if(m){try{return JSON.stringify({k:'img',u:new URL(m[1],document.baseURI).href,p:''});}catch(e){}}" +
+            "return '';})($x,$y)"
+        w.evaluateJavascript(js) { raw ->
+            var out: Triple<String, String, String>? = null
+            try {
+                val s = org.json.JSONTokener(raw ?: "").nextValue() as? String
+                if (!s.isNullOrEmpty()) {
+                    val o = org.json.JSONObject(s)
+                    val u = o.optString("u")
+                    if (u.isNotEmpty()) out = Triple(o.optString("k"), u, o.optString("p"))
+                }
+            } catch (e: Exception) {
+                // nothing usable under the finger
+            }
+            done(out)
+        }
+    }
+
+    /** The menu for a video or a sound. */
+    private fun showMediaMenu(kind: String, url: String, poster: String) {
+        val word = if (kind == "audio") "audio" else "video"
+        val items = ArrayList<String>()
+        val acts = ArrayList<() -> Unit>()
+        fun add(name: String, action: () -> Unit) {
+            items.add(name)
+            acts.add(action)
+        }
+        val low = url.substringBefore('#').substringBefore('?').lowercase()
+        if (!isSandbox) {
+            add("Download $word") {
+                when {
+                    url.startsWith("blob:") -> toast("This $word is streamed in pieces and can't be saved directly")
+                    low.endsWith(".m3u8") || low.endsWith(".mpd") -> toast("Live or streamed $word can't be saved directly")
+                    else -> downloadMedia(url, if (kind == "audio") "audio/" else "video/", if (kind == "audio") "audio/mpeg" else "video/mp4")
+                }
+            }
+        }
+        if (url.startsWith("https://")) {
+            add("Open $word in new tab") { newTab(url, false) }
+            add("Copy $word link") { copyText("$word link", url, "Link copied") }
+            add("Share $word link") { shareText(url) }
+        }
+        if (poster.startsWith("https://") && !isSandbox) add("Download cover picture") { downloadImage(poster) }
+        if (items.isEmpty()) {
+            toast("This $word can't be saved")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (url.length > 60) url.substring(0, 60) + "..." else url)
+            .setItems(items.toTypedArray()) { _, which -> acts[which]() }
+            .show()
+    }
+
+    /** Like downloadImage, but for videos and sounds: the real type is asked from the server when the name does not say. */
+    private fun downloadMedia(url: String, typePrefix: String, fallback: String) {
+        if (!url.startsWith("https://")) {
+            toast("Blocked: downloads must use a secure (https) link")
+            return
+        }
+        val path = url.substringBefore('#').substringBefore('?').lowercase()
+        val known = listOf(".mp4", ".webm", ".mkv", ".mov", ".m4v", ".3gp", ".mp3", ".m4a", ".aac", ".ogg", ".wav", ".opus", ".flac")
+            .any { path.endsWith(it) }
+        if (known) {
+            enqueueDownload(url, null, null, null)
+            return
+        }
+        Thread {
+            var type = fallback
+            try {
+                val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "HEAD"
+                c.connectTimeout = 6000
+                c.readTimeout = 6000
+                val ct = c.contentType?.substringBefore(';')?.trim()?.lowercase()
+                if (c.responseCode == 200 && ct != null && ct.startsWith(typePrefix)) type = ct
+                c.disconnect()
+            } catch (e: Exception) {
+                // keep the guess
+            }
+            runOnUiThread { enqueueDownload(url, null, null, type) }
+        }.start()
+    }
+
     private fun onLongPress(w: WebView): Boolean {
         val hit = w.hitTestResult
         val type = hit.type
@@ -1289,12 +1459,19 @@ open class BrowserActivity : Activity() {
             return true
         }
         if (type == WebView.HitTestResult.UNKNOWN_TYPE) {
-            // pressing on text selects it. Only when nothing got selected do we show the page menu.
-            w.postDelayed({
-                w.evaluateJavascript("(window.getSelection()+'').length") { v ->
-                    if (v == "0" && current?.web === w) showPageMenu()
+            // a video, a sound or a covered picture? then show the save menu
+            probeMedia(w) { found ->
+                if (found != null && current?.web === w) {
+                    if (found.first == "img") showLinkMenu(null, found.second) else showMediaMenu(found.first, found.second, found.third)
+                } else {
+                    // pressing on text selects it. Only when nothing got selected do we show the page menu.
+                    w.postDelayed({
+                        w.evaluateJavascript("(window.getSelection()+'').length") { v ->
+                            if (v == "0" && current?.web === w) showPageMenu()
+                        }
+                    }, 300)
                 }
-            }, 300)
+            }
         }
         return false
     }
@@ -1402,6 +1579,13 @@ open class BrowserActivity : Activity() {
             if (!isSandbox) add("Download image") { downloadImage(img) }
             add("Open image in new tab") { newTab(img, false) }
             add("Copy image link") { copyText("image link", img, "Image link copied") }
+            add("Share image link") { shareText(img) }
+            // sends the picture's address to Google, so it is only offered in normal windows
+            if (!isPrivate && !isSandbox) {
+                add("Search this image (Google Lens)") {
+                    newTab("https://lens.google.com/uploadbyurl?url=" + URLEncoder.encode(img, "UTF-8"), false)
+                }
+            }
         }
         if (url != null) {
             add("Open in new tab") { newTab(url, false) }
@@ -1629,6 +1813,7 @@ open class BrowserActivity : Activity() {
             send.putExtra(Intent.EXTRA_TEXT, current?.web?.url ?: homeUrl)
             startActivity(Intent.createChooser(send, "Share"))
         }
+        if (!isPrivate && !isSandbox) item("\uD83D\uDCCC", "Add to Home screen", "") { addToHomeScreen(t) }
         item("\uD83D\uDD0D", "Find in page", "") { openFind() }
         item("\uD83D\uDCD6", if (t.reader) "Exit reading mode" else "Show reading mode", "") { toggleReader() }
         item("\uD83D\uDDA5", "Desktop site", if (t.desktop) "\u2611" else "\u2610") { toggleDesktop() }

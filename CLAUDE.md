@@ -23,8 +23,15 @@ Flat repo: GitHub Actions (`.github/workflows/build.yml`) copies every `*.kt` in
 - Recently closed tabs (max 10) + menu item "Reopen closed tab". Cleared by "Clear browsing data".
 - Address-bar suggestions from bookmarks + history (`AutoCompleteTextView`, `suggestionsFor`), off in private/sandbox.
 
+- Long-press downloads: images (existing) + video/audio + covered images via `probeMedia()` (JS `elementFromPoint` + position scan of `<video>`), `showMediaMenu`, `downloadMedia`. Extra image items: Share image link, Google Lens. blob:/m3u8/mpd streams show a "can't be saved" toast (needs a different approach, see roadmap 15).
+- Pull-down-to-refresh: touch listener in `createTab` (`pullStartY`, 140dp drag at scrollY==0).
+- "Add to Home screen" (`addToHomeScreen`, pinned shortcut) in the menu.
+- Widgets are now one row high (`layout__widget_card.xml` compact). New: `SearchWidget` (search box + mic, `layout__widget_searchbox.xml`), `QuickBarWidget` (6 buttons: search, voice, new tab, private tab, downloads, bookmarks; `layout__widget_bar.xml`, `xml__widget_bar.xml`, registered in manifest). Widget tap = `widgetTap(ctx, action)`; actions handled in `handleWidget()`: search, voice, charge, speed, news, newtab, private, downloads, bookmarks, history.
+
 ## Chrome features still missing (priority order)
-1. Pull-to-refresh (custom touch handling on the WebView, no AndroidX SwipeRefreshLayout).
+(1 pull-to-refresh: DONE)
+15. Save blob:/HLS videos (needs JS `fetch(blob)` -> Bridge base64 chunks, or a sniffing of the real media URLs through `shouldInterceptRequest` and a "media found on this page" list).
+16. Widgets: a widget picker note in Settings, a bookmarks-list widget (RemoteViews collection), battery widget with progress bar, theme (light/dark) follow.
 2. Settings toggle for `store.restoreTabs` ("Continue where you left off") in `about:settings` (AboutPages.kt + Bridge method).
 3. Omnibox: also suggest search queries (history of searches), show title under URL, "Search for …" first row.
 4. Tab groups / pinned tabs; tab thumbnails in the switcher.
