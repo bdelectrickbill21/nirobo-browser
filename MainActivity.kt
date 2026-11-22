@@ -934,24 +934,12 @@ open class BrowserActivity : Activity() {
     internal fun openDownload(idText: String) {
         val id = idText.toLongOrNull() ?: return
         val d = Downloader.find(id) ?: return
-        try {
-            val uri = Downloader.uriFor(id)
-            if (uri == null) {
-                toast("The file is not there anymore")
-                return
-            }
-            val mime = if (d.mime.isEmpty()) "*/*" else d.mime
-            val i = if (mime == "application/pdf") {
-                // PDF files open in Nirobo's own offline reader
-                Intent(this, PdfReaderActivity::class.java).setData(uri)
-            } else {
-                Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
-            }
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(i)
-        } catch (e: Exception) {
-            toast("No app on your phone can open this file")
+        val uri = Downloader.uriFor(id)
+        if (uri == null) {
+            toast("The file is not there anymore")
+            return
         }
+        FileOpener.open(this, uri, d.name, d.mime) { msg -> toast(msg) }
     }
 
     internal fun shareDownload(idText: String) {

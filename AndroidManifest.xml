@@ -153,6 +153,12 @@
                 android:resource="@xml/widget_news" />
         </receiver>
 
+        <!-- shows downloaded pictures, video, audio, text and web files -->
+        <activity
+            android:name=".FileViewerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode" />
+
         <!-- the offline PDF reader (opened from the Downloads page) -->
         <activity
             android:name=".PdfReaderActivity"

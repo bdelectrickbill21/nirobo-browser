@@ -12,6 +12,7 @@ Flat repo: GitHub Actions (`.github/workflows/build.yml`) copies every `*.kt` in
 - `Store.kt`: all persistence in one SharedPreferences as JSON (settings, bookmarks, history ≤2000, downloads, per-site shield, session, closed tabs).
 - `AboutPages.kt` (~2400 lines): internal `about:` pages as HTML strings (home/settings/history/bookmarks/downloads/version/news…). Talks to Kotlin through `Bridge` (JS interface, only attached on about: pages).
 - `Downloader.kt`: OUR OWN download engine (no phone DownloadManager). `DlItem`, `object Downloader`, `DownloadService` (foreground, Pause/Cancel buttons), `BlobSaver` (blob: files), helpers `cleanFileName`, `parseDisposition`, `friendlyError`.
+- `FileViewer.kt`: `FileOpener` (decides how a finished download opens: `kindOf`, `open`, `external`, `share`), `FileViewerActivity` (in-app image / video / audio / text-xml-json-csv / html viewer, buttons "Open with" + "Share"), `ZoomImageView` (pinch + drag + double-tap). PDF -> `PdfReaderActivity`, APK -> installer (asks "install unknown apps" first), other types -> `ACTION_VIEW` with clipData + grant, then chooser.
 - `Updater.kt` (self-update), `NewsSaver.kt` (daily offline news), `NiroboWidgets.kt`, `PdfReaderActivity.kt`, `BootReceiver.kt`.
 
 ## Rules for editing
@@ -34,6 +35,8 @@ Flat repo: GitHub Actions (`.github/workflows/build.yml`) copies every `*.kt` in
   - `blob:` links: `BlobSaver` (JS interface `NiroboBlob`, one-time random token, XHR + FileReader, 256 KB base64 chunks, 64 MB cap). `data:` links decoded in Kotlin. "Download page" (`saveWebArchive` -> .mht) in the page menu. APK allowed after a "can harm your phone" Keep/Discard dialog; .exe/.bat... still blocked while `store.dangerFiles`.
   - Downloads page (`about:downloads`, `downloads()` in AboutPages.kt): usage line, search, type chips (All/Images/Video/Audio/Documents/Other), "In progress" section, rest grouped by day, per-item Open/Share/Copy link/Delete or Pause/Resume/Cancel/Retry, Pause all/Resume all/Clear list, collapsible "Download from a link". Bridge: `downloadsLive, openDownload, shareDownload, copyDownloadLink, pauseDownload, retryDownload(=resume), deleteDownload, pauseAllDownloads, resumeAllDownloads, clearDownloads, downloadLink`.
   - Not possible / not done: POST downloads (WebView gives no body), HLS/DASH streams, parallel multi-connection download, "ask where to save", rename.
+
+- **Opening downloads (Nov 22):** `MainActivity.openDownload` -> `FileOpener.open` (checks the file is readable first, real error text on failure). Downloads page: tap the icon/name of a finished file opens it. Notification tap (`open:<id>`) uses the same path.
 
 ## Chrome features still missing (priority order)
 (1 pull-to-refresh: DONE)

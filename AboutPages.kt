@@ -668,6 +668,7 @@ internal object AboutPages {
           var nm=document.createElement('div');nm.className='t';nm.style.wordBreak='break-all';nm.textContent=d.n;
           var st=document.createElement('div');st.className='u'+(d.s==='failed'?' err':'');st.id='st-'+d.id;st.textContent=statusText(d);
           tt.appendChild(nm);tt.appendChild(st);top.appendChild(ic);top.appendChild(tt);row.appendChild(top);
+          if(d.s==='done'){top.onclick=function(){Bridge.openDownload(d.id)}}
           if(active(d)){
             var bar=document.createElement('div');bar.className='pbar'+(d.s==='paused'?' pz':'');
             var fill=document.createElement('i');fill.id='pb-'+d.id;fill.style.width=pct(d)+'%';
