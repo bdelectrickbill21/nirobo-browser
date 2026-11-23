@@ -129,3 +129,9 @@ Principles: zero telemetry, no accounts, no extensions (extensions are how email
 - Work space (`WorkActivity`, `Store(ctx,"work")`, `openSpace`) still in code, no menu item. Safe to delete later if unused.
 - Browser roadmap continues with: build check of steps 1-2 (permission prompt, Work space), then audit items 3 (https fallback), 2, 6, 7, mail link inspector, blocklist additions.
 - New app = ask user for: app name, package id, platforms, whether repo is separate (suggest new repo `nirobo-media` with the same GitHub Actions pattern).
+
+## Nov 23: DVD MENU THEME added (Settings > Appearance > Theme "DVD menu (retro)", value 3) - UNBUILT
+- `Store.theme == 3`. `isDark()` returns true for it. MainActivity: `dvd` (normal windows only), `iconColor`, `glossBar()` (blue gradient top + bottom bars, silver icons, status bar #0A2A7A). Native bars apply on next app start (page skin applies at once).
+- AboutPages: `AboutPages.dvd` flag (set from MainActivity before `build`), `dvdCss()` overlay appended in `page()` (blue radial background, scanlines, "PLAY" corner mark, gold chapter titles, glossy silver pill buttons, glossy cards), bouncing NIROBO DVD logo on `about:blank` (corner/wall hit changes colour, respects reduced-motion).
+- Not skinned: tab switcher, menu popup, find bar, dialogs, real websites. Page-specific `<style>` blocks are overridden with `!important`; if one page looks odd, add a rule to `dvdCss()`.
+- NEXT design ideas: skin the menu popup + tab switcher; DVD "chapter select" tiles on the home/news page; startup "disc loading" splash.

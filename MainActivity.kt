@@ -157,14 +157,33 @@ open class BrowserActivity : Activity() {
     private var fullCb: WebChromeClient.CustomViewCallback? = null
     private var fileCb: ValueCallback<Array<Uri>>? = null
 
+    /** The retro "DVD menu" theme (Settings > Appearance). Normal windows only. */
+    private val dvd: Boolean get() = store.theme == 3 && !isPrivate && !isSandbox
+
     private val barColor: Int
-        get() = Color.parseColor(if (isSandbox) "#6B1414" else if (isPrivate) "#2A1F4B" else if (space == "work") "#0B3A5B" else "#0E3B2C")
+        get() = Color.parseColor(
+            if (isSandbox) "#6B1414" else if (isPrivate) "#2A1F4B" else if (dvd) "#0A2A7A"
+            else if (space == "work") "#0B3A5B" else "#0E3B2C"
+        )
+
+    /** Icons on the bottom bar: silver on the DVD theme, green otherwise. */
+    private val iconColor: Int get() = if (dvd) Color.parseColor("#DDE8FF") else barColor
+
+    /** A glossy blue bar like an old DVD menu. */
+    private fun glossBar(): GradientDrawable = GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(
+            Color.parseColor("#4A85EE"), Color.parseColor("#1D4DB8"),
+            Color.parseColor("#0F2F85"), Color.parseColor("#1A41A0")
+        )
+    )
 
     private fun dp(n: Int): Int = (n * resources.displayMetrics.density).toInt()
 
     /** True when the app should draw its own pages dark. */
     internal fun isDark(): Boolean {
         val t = store.theme
+        if (t == 3) return true
         if (t == 1) return false
         if (t == 2) return true
         val mode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
@@ -335,7 +354,7 @@ open class BrowserActivity : Activity() {
         topBar = top
         top.orientation = LinearLayout.HORIZONTAL
         top.gravity = Gravity.CENTER_VERTICAL
-        top.setBackgroundColor(barColor)
+        if (dvd) top.background = glossBar() else top.setBackgroundColor(barColor)
         top.setPadding(dp(8), dp(6), dp(8), dp(6))
 
         // the address bar suggests bookmarks and history as you type (never in private or sandbox windows)
@@ -455,9 +474,10 @@ open class BrowserActivity : Activity() {
         val bottom = LinearLayout(this)
         bottomBar = bottom
         bottom.orientation = LinearLayout.HORIZONTAL
-        bottom.setBackgroundColor(Color.parseColor(if (isPrivate) "#EEEAF6" else "#F1F4F2"))
+        if (dvd) bottom.background = glossBar()
+        else bottom.setBackgroundColor(Color.parseColor(if (isPrivate) "#EEEAF6" else "#F1F4F2"))
         fun button(symbol: String, action: () -> Unit) {
-            val t = label(symbol, 22f, barColor)
+            val t = label(symbol, 22f, iconColor)
             t.gravity = Gravity.CENTER
             t.setOnClickListener { action() }
             bottom.addView(t, LinearLayout.LayoutParams(0, dp(50), 1f))
@@ -467,11 +487,11 @@ open class BrowserActivity : Activity() {
         button("\uFF0B") { newTab(startUrl, false) }
         button("\u2302") { go(startUrl) }
 
-        tabCount = label("1", 12f, barColor)
+        tabCount = label("1", 12f, iconColor)
         tabCount.gravity = Gravity.CENTER
         val frame = GradientDrawable()
         frame.setColor(Color.TRANSPARENT)
-        frame.setStroke(dp(2), barColor)
+        frame.setStroke(dp(2), iconColor)
         frame.cornerRadius = dp(5).toFloat()
         tabCount.background = frame
         val tabCell = FrameLayout(this)
@@ -1211,9 +1231,11 @@ open class BrowserActivity : Activity() {
             t.web.removeJavascriptInterface("Bridge")
             val html: String
             if (isSandbox) {
+                AboutPages.dvd = dvd
                 html = if (name == "blank") AboutPages.build("about:blank", isDark()) else sandboxPage()
             } else {
                 t.web.addJavascriptInterface(bridge, "Bridge")
+                AboutPages.dvd = dvd
                 html = AboutPages.build(shown, isDark())
             }
             // the page name is also the history address, so back/forward and the address bar keep the right name

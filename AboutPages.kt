@@ -37,6 +37,44 @@ internal object AboutPages {
     fun name(url: String): String =
         url.removePrefix("about:").trim().lowercase().ifEmpty { "blank" }
 
+    /** True when the "DVD menu" theme is chosen (set by the browser window before a page is built). */
+    @Volatile var dvd = false
+
+    /** The retro DVD-menu skin: deep blue, glossy silver buttons, gold chapter titles. Laid over css(). */
+    private fun dvdCss(): String = """
+    html,body{background:#030a24 !important;color:#fff !important}
+    body{background:radial-gradient(ellipse at 50% -10%,#2a66e0 0%,#0e2d8f 40%,#030a24 100%) fixed !important;
+      font-family:'Trebuchet MS','Roboto','Segoe UI',sans-serif !important}
+    body::before{content:"";position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:9;
+      background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0,rgba(255,255,255,.035) 1px,transparent 1px,transparent 3px)}
+    body::after{content:"\25B6  PLAY";position:fixed;top:8px;right:12px;z-index:10;pointer-events:none;
+      font-size:11px;letter-spacing:3px;color:#fff;opacity:.55}
+    h1{text-transform:uppercase;letter-spacing:3px;color:#fff !important;
+      text-shadow:0 0 12px #5aa0ff,0 2px 0 #0a1f66}
+    h1::after{content:"";display:block;height:3px;margin-top:6px;
+      background:linear-gradient(90deg,#ffd45a,rgba(255,212,90,0))}
+    h2{color:#ffd45a !important;text-shadow:0 1px 0 #0a1f66}
+    h2::before{content:"\25B6  ";font-size:11px}
+    p,.sub,.hint,.row .k,.tile .lbl,.item .u,.empty,.unit{color:#b9c9f2 !important}
+    a{color:#9fd0ff !important}
+    .card,.tile{background:linear-gradient(180deg,rgba(60,120,235,.55) 0%,rgba(14,45,143,.7) 50%,rgba(6,24,90,.85) 100%) !important;
+      border:1px solid #c4d0ec !important;border-radius:16px;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 4px 14px rgba(0,0,0,.45)}
+    .sg{background:rgba(8,28,100,.6) !important;border:1px solid #9fb4e4 !important}
+    .row,.item,.si{border-color:rgba(190,205,240,.25) !important}
+    .big,.num{color:#fff !important;text-shadow:0 0 10px rgba(90,160,255,.8)}
+    button{background:linear-gradient(180deg,#f7f9ff 0%,#c3d0ee 48%,#8da2d0 52%,#d3ddf4 100%) !important;
+      color:#0a1f66 !important;border:1px solid #fff !important;border-radius:999px !important;
+      text-shadow:0 1px 0 rgba(255,255,255,.7);box-shadow:0 2px 8px rgba(0,0,0,.5)}
+    button.ghost{background:rgba(255,255,255,.08) !important;color:#fff !important;
+      border:1px solid #c4d0ec !important;text-shadow:none;box-shadow:none}
+    .sw{background:#1a2f77 !important}.sw.on{background:#35c8ff !important}
+    .bar{background:#0a1f66 !important}
+    .bar>i{background:linear-gradient(90deg,#ffd45a,#ff9f2e) !important}
+    .ok{color:#6dffb0 !important}.warn{color:#ffd45a !important}.bad{color:#ff8a80 !important}
+    input,select,textarea{background:#0a1f66 !important;color:#fff !important;border:1px solid #9fb4e4 !important}
+    """
+
     /** The shared look: Nirobo's deep green, light and dark. */
     private fun css(dark: Boolean): String {
         val bg = if (dark) "#0B1512" else "#F6FAF7"
@@ -110,7 +148,7 @@ internal object AboutPages {
         return """<!DOCTYPE html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
         <meta name="color-scheme" content="${if (dark) "dark" else "light"}">
-        <title>$title</title><style>${css(dark)}</style></head>
+        <title>$title</title><style>${css(dark)}${if (dvd) dvdCss() else ""}</style></head>
         <body>$body<script>function encq(s){return encodeURIComponent(s).replace(/'/g,'%27').replace(/\(/g,'%28').replace(/\)/g,'%29')}$script</script></body></html>"""
     }
 
@@ -124,6 +162,35 @@ internal object AboutPages {
 
     private fun blank(dark: Boolean): String {
         val bg = if (dark) "#0B1512" else "#FFFFFF"
+        if (dvd) return """<!DOCTYPE html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>about:blank</title>
+        <style>html,body{margin:0;height:100%;overflow:hidden;
+          background:radial-gradient(ellipse at 50% -10%,#2a66e0 0%,#0e2d8f 40%,#030a24 100%)}
+        #l{position:absolute;left:0;top:0;padding:8px 18px;border-radius:12px;
+          font:900 30px 'Trebuchet MS',sans-serif;letter-spacing:4px;color:#fff;background:#d0021b;
+          box-shadow:0 0 18px rgba(255,255,255,.35);will-change:transform;text-align:center;line-height:1}
+        #l small{display:block;font-size:10px;letter-spacing:6px;font-weight:700;margin-top:2px}
+        #t{position:fixed;bottom:14px;width:100%;text-align:center;color:#b9c9f2;
+          font:12px sans-serif;letter-spacing:2px}</style></head>
+        <body><div id="l">NIROBO<small>DVD</small></div>
+        <div id="t">NO DISC - TYPE AN ADDRESS ABOVE</div>
+        <script>
+        var l=document.getElementById('l'),x=20,y=40,dx=1,dy=1,s=90,last=0,h=0;
+        var still=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+        function col(){h=(h+67)%360;l.style.background='hsl('+h+',85%,45%)'}
+        function step(t){
+          var dt=last?Math.min(40,t-last):16;last=t;
+          var W=innerWidth-l.offsetWidth,H=innerHeight-l.offsetHeight;
+          x+=dx*s*dt/1000;y+=dy*s*dt/1000;
+          var hit=false;
+          if(x<=0){x=0;dx=1;hit=true}else if(x>=W){x=W;dx=-1;hit=true}
+          if(y<=0){y=0;dy=1;hit=true}else if(y>=H){y=H;dy=-1;hit=true}
+          if(hit)col();
+          l.style.transform='translate('+x+'px,'+y+'px)';
+          if(!still)requestAnimationFrame(step)}
+        requestAnimationFrame(step);
+        </script></body></html>"""
         return """<!DOCTYPE html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>about:blank</title>
@@ -893,7 +960,7 @@ internal object AboutPages {
           <div class="sg">
             <div class="si"><div class="t"><b>Theme</b></div>
               <select id="theme" onchange="setTheme(this.value)" style="font:inherit;padding:6px 8px;border-radius:8px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit">
-                <option value="0">Follow phone</option><option value="1">Light</option><option value="2">Dark</option>
+                <option value="0">Follow phone</option><option value="1">Light</option><option value="2">Dark</option><option value="3">DVD menu (retro)</option>
               </select></div>
             <div class="si"><div class="t"><b>Reader text size</b></div>
               <input id="rsize" type="range" min="14" max="26" step="1" oninput="setReader(this.value)" style="width:120px"></div>
@@ -970,7 +1037,7 @@ internal object AboutPages {
           g('s-bar').textContent=S.barBottom?'Bottom':'Top';
           g('s-priv').textContent=(S.shield?'Shield on':'Shield off')+(S.secure?' · screen locked':'');
           g('s-home').textContent=String(S.homeUrl).replace('https://','');
-          g('s-app').textContent=['Follow phone','Light','Dark'][S.theme]||'';
+          g('s-app').textContent=['Follow phone','Light','Dark','DVD menu'][S.theme]||'';
           g('s-acc').textContent=S.textZoom+'% text';
           g('s-ver').textContent='Version '+S.version;
           dots('engine',eng);dots('bar',S.barBottom?'bottom':'top');
