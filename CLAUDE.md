@@ -112,3 +112,20 @@ Principles: zero telemetry, no accounts, no extensions (extensions are how email
 - `open val space` in BrowserActivity; `WorkActivity` (process `:work`, `setDataDirectorySuffix("work")`, bar colour #0B3A5B, manifest entry). `openSpace(work, url)`. ONE menu item: "Switch to Work space" / "Switch to Personal space" (this slot becomes "Apps & Spaces" in step 3 - do not add another).
 - Known limits: DownloadService notification runs in the main process, so Work downloads work but may not show the live notification; Work space does not run the daily news saver; link intents always open in Personal.
 - NEXT: step 3 `about:apps` (tiles open in Personal or Work; replace the menu item label with "Apps & Spaces").
+
+## Nov 23: MEDIA MODE built (user's idea; replaces the "Switch to Work space" menu item) - UNBUILT, UNTESTED
+- New file `MediaActivity.kt` (own screen, main process = shares logins with the browser). ONE menu item "Media mode" in `showMenu()`.
+- Top: site chips; bottom: section chips (Home/Shorts/Subscriptions... + Upload + reload + open in Browser). One lazy WebView per site, own light shield (blocklist.txt hosts + `BrowserActivity.AD_HIDE_JS` / `YT_JS`, now `internal`). Fullscreen video supported. No app-link opening.
+- "+ Post" composer: pick files (ACTION_OPEN_DOCUMENT), caption, tick sites -> Start. For each site: opens upload page (desktop UA when `uploadDesktop`), `onShowFileChooser` answers with the file (if `accept` matches), `FILL_JS` types title/caption (waits <= 2 min). Banner has Next / Stop. NEVER presses Publish (user does).
+- Also receives Android Share (SEND / SEND_MULTIPLE) -> composer opens with files + text.
+- ALL site addresses live in `MediaPlatforms.all` at top of MediaActivity.kt (best-effort, NOT verified on a phone): fix there if a page does not open. TikTok/YouTube Studio/BitChute/Odysee upload pages are desktop-only layouts and may be awkward on a phone.
+- Limits to tell user: no single merged feed (each site needs its own API key/account); no push notifications; sign-in popups (Google login) are blocked (`javaScriptCanOpenWindowsAutomatically=false`) - use e-mail login or sign in via the Browser first (cookies shared); X/TikTok may detect WebView.
+- Work space code (`WorkActivity`, `Store(ctx, "work")`, `openSpace`) is kept but has NO menu item now. Re-add later inside Media mode / settings if wanted.
+- NEXT ideas: YouTube channel Community tab shortcut, scheduled posting reminder, per-site caption limits (X 280), shorten-link-free caption check, Work-space link from Media mode header.
+
+## Nov 23 (later): MEDIA MODE REMOVED from the browser - it will be built as a SEPARATE APP
+- Removed: menu item, manifest entry, `internal` on AD_HIDE_JS/YT_JS (back to private). Browser has NO mode switching and no Media mode.
+- Kept for the new app: `MediaActivity.kt` + `MEDIA_MANIFEST.xml` - these are for the NEW repo ONLY. DELETE both from the browser repo (CI would compile them there; they are standalone, own copies of AD_HIDE_JS/YT_JS, no MainActivity needed, still need assets/blocklist.txt). Design inside: `MediaPlatforms.all` site list, chips UI, lazy WebView per site, composer (pick file + caption + tick sites), upload run (file chooser auto-answer + `FILL_JS` caption typing, user presses Publish), Android Share receiver, light ad shield from blocklist.txt. Copy ideas, not the file, because the new app needs its own package/manifest/build.
+- Work space (`WorkActivity`, `Store(ctx,"work")`, `openSpace`) still in code, no menu item. Safe to delete later if unused.
+- Browser roadmap continues with: build check of steps 1-2 (permission prompt, Work space), then audit items 3 (https fallback), 2, 6, 7, mail link inspector, blocklist additions.
+- New app = ask user for: app name, package id, platforms, whether repo is separate (suggest new repo `nirobo-media` with the same GitHub Actions pattern).

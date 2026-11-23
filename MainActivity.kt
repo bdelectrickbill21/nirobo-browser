@@ -2045,10 +2045,6 @@ open class BrowserActivity : Activity() {
         item("\uFF0B", "New tab", "") { newTab(startUrl, false) }
         if (!isPrivate && !isSandbox) item("\u21BA", "Reopen closed tab", "") { reopenClosedTab() }
         if (!isPrivate) item("\uD83D\uDD76", "New private tab", "") { openPrivate(null) }
-        // ONE menu slot for spaces (becomes "Apps & Spaces" in step 3)
-        if (!isPrivate && !isSandbox) item("\uD83D\uDC64", if (space == "work") "Switch to Personal space" else "Switch to Work space", "") {
-            openSpace(space != "work", null)
-        }
         divider()
         if (!isPrivate) {
             item("\u2193", "Downloads", "") { loadInto(t, "about:downloads") }
