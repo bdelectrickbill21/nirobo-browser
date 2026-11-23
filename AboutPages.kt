@@ -38,7 +38,7 @@ internal object AboutPages {
         url.removePrefix("about:").trim().lowercase().ifEmpty { "blank" }
 
     /** True when the "DVD menu" theme is chosen (set by the browser window before a page is built). */
-    @Volatile var dvd = false
+    @Volatile var dvd = true
 
     /** The retro DVD-menu skin: deep blue, glossy silver buttons, gold chapter titles. Laid over css(). */
     private fun dvdCss(): String = """
@@ -49,8 +49,10 @@ internal object AboutPages {
       background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0,rgba(255,255,255,.035) 1px,transparent 1px,transparent 3px)}
     body::after{content:"\25B6  PLAY";position:fixed;top:8px;right:12px;z-index:10;pointer-events:none;
       font-size:11px;letter-spacing:3px;color:#fff;opacity:.55}
-    h1{text-transform:uppercase;letter-spacing:3px;color:#fff !important;
-      text-shadow:0 0 12px #5aa0ff,0 2px 0 #0a1f66}
+    h1{text-transform:uppercase;letter-spacing:4px;font-weight:900;
+      background:linear-gradient(180deg,#ffffff 0%,#9fb4e4 50%,#ffffff 52%,#c4d0ec 100%);
+      -webkit-background-clip:text;background-clip:text;color:transparent !important;
+      filter:drop-shadow(0 2px 4px rgba(0,0,40,.8))}
     h1::after{content:"";display:block;height:3px;margin-top:6px;
       background:linear-gradient(90deg,#ffd45a,rgba(255,212,90,0))}
     h2{color:#ffd45a !important;text-shadow:0 1px 0 #0a1f66}
@@ -62,6 +64,8 @@ internal object AboutPages {
       box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 4px 14px rgba(0,0,0,.45)}
     .sg{background:rgba(8,28,100,.6) !important;border:1px solid #9fb4e4 !important}
     .row,.item,.si{border-color:rgba(190,205,240,.25) !important}
+    .si:active,.item:active{background:linear-gradient(90deg,rgba(255,212,90,.38),rgba(255,212,90,0)) !important}
+    .si:active::before,.item:active::before{content:"\25B6";color:#ffd45a;margin-right:8px}
     .big,.num{color:#fff !important;text-shadow:0 0 10px rgba(90,160,255,.8)}
     button{background:linear-gradient(180deg,#f7f9ff 0%,#c3d0ee 48%,#8da2d0 52%,#d3ddf4 100%) !important;
       color:#0a1f66 !important;border:1px solid #fff !important;border-radius:999px !important;
@@ -960,7 +964,7 @@ internal object AboutPages {
           <div class="sg">
             <div class="si"><div class="t"><b>Theme</b></div>
               <select id="theme" onchange="setTheme(this.value)" style="font:inherit;padding:6px 8px;border-radius:8px;border:1px solid rgba(127,127,127,.4);background:transparent;color:inherit">
-                <option value="0">Follow phone</option><option value="1">Light</option><option value="2">Dark</option><option value="3">DVD menu (retro)</option>
+                <option value="0">Follow phone</option><option value="1">Light</option><option value="2">Dark</option>
               </select></div>
             <div class="si"><div class="t"><b>Reader text size</b></div>
               <input id="rsize" type="range" min="14" max="26" step="1" oninput="setReader(this.value)" style="width:120px"></div>
@@ -1037,7 +1041,7 @@ internal object AboutPages {
           g('s-bar').textContent=S.barBottom?'Bottom':'Top';
           g('s-priv').textContent=(S.shield?'Shield on':'Shield off')+(S.secure?' · screen locked':'');
           g('s-home').textContent=String(S.homeUrl).replace('https://','');
-          g('s-app').textContent=['Follow phone','Light','Dark','DVD menu'][S.theme]||'';
+          g('s-app').textContent=['Follow phone','Light','Dark'][S.theme]||'';
           g('s-acc').textContent=S.textZoom+'% text';
           g('s-ver').textContent='Version '+S.version;
           dots('engine',eng);dots('bar',S.barBottom?'bottom':'top');

@@ -11,7 +11,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.SweepGradient
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -29,6 +32,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
@@ -157,33 +161,56 @@ open class BrowserActivity : Activity() {
     private var fullCb: WebChromeClient.CustomViewCallback? = null
     private var fileCb: ValueCallback<Array<Uri>>? = null
 
-    /** The retro "DVD menu" theme (Settings > Appearance). Normal windows only. */
-    private val dvd: Boolean get() = store.theme == 3 && !isPrivate && !isSandbox
+    /** Nirobo always looks like an old DVD player (WinDVD / PowerDVD era). */
+    private val dvd: Boolean get() = true
+
+    /** The glowing "LCD" colour: cyan normally, violet in private windows, red in the sandbox. */
+    private val lcd: Int get() = Color.parseColor(if (isSandbox) "#FF8A80" else if (isPrivate) "#C9A6FF" else "#7FF3FF")
+    private val lcdDim: Int get() = Color.parseColor(if (isSandbox) "#8A4A46" else if (isPrivate) "#6E5A94" else "#3F8A94")
 
     private val barColor: Int
         get() = Color.parseColor(
-            if (isSandbox) "#6B1414" else if (isPrivate) "#2A1F4B" else if (dvd) "#0A2A7A"
+            if (isSandbox) "#6B1414" else if (isPrivate) "#2A1F4B" else if (dvd) "#14171C"
             else if (space == "work") "#0B3A5B" else "#0E3B2C"
         )
 
     /** Icons on the bottom bar: silver on the DVD theme, green otherwise. */
-    private val iconColor: Int get() = if (dvd) Color.parseColor("#DDE8FF") else barColor
+    private val iconColor: Int get() = if (dvd) lcd else barColor
 
-    /** A glossy blue bar like an old DVD menu. */
-    private fun glossBar(): GradientDrawable = GradientDrawable(
-        GradientDrawable.Orientation.TOP_BOTTOM,
-        intArrayOf(
-            Color.parseColor("#4A85EE"), Color.parseColor("#1D4DB8"),
-            Color.parseColor("#0F2F85"), Color.parseColor("#1A41A0")
+    /** Brushed dark metal like the panel of a DVD player; the tint shows which window this is. */
+    private fun glossBar(): GradientDrawable {
+        val c = if (isSandbox) intArrayOf(0xFF7A2A2A.toInt(), 0xFF4A1414.toInt(), 0xFF2A0A0A.toInt(), 0xFF3A1010.toInt())
+        else if (isPrivate) intArrayOf(0xFF4C4270.toInt(), 0xFF2C2550.toInt(), 0xFF17122F.toInt(), 0xFF221B40.toInt())
+        else intArrayOf(0xFF4A515C.toInt(), 0xFF2A2F38.toInt(), 0xFF161A20.toInt(), 0xFF20252D.toInt())
+        return GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, c)
+    }
+
+    /** A glossy silver button (round, or a rounded rectangle for MENU) like the keys on a DVD player. */
+    private fun silverKey(round: Boolean): GradientDrawable {
+        val g = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(0xFFF4F7FB.toInt(), 0xFFB4BECE.toInt(), 0xFF7C8798.toInt(), 0xFFC9D1DD.toInt())
         )
-    )
+        g.shape = if (round) GradientDrawable.OVAL else GradientDrawable.RECTANGLE
+        if (!round) g.cornerRadius = dp(8).toFloat()
+        g.setStroke(dp(1), Color.parseColor("#4B5360"))
+        return g
+    }
+
+    /** The glowing display panel (address bar and chapter counter). */
+    private fun lcdPanel(radius: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.setColor(Color.parseColor(if (isSandbox) "#1A0606" else if (isPrivate) "#0E0818" else "#031018"))
+        g.cornerRadius = dp(radius).toFloat()
+        g.setStroke(dp(1), Color.parseColor("#8A96A8"))
+        return g
+    }
 
     private fun dp(n: Int): Int = (n * resources.displayMetrics.density).toInt()
 
     /** True when the app should draw its own pages dark. */
     internal fun isDark(): Boolean {
         val t = store.theme
-        if (t == 3) return true
         if (t == 1) return false
         if (t == 2) return true
         val mode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
@@ -202,6 +229,7 @@ open class BrowserActivity : Activity() {
         if (isSandbox) CookieManager.getInstance().setAcceptCookie(false)
         mobileUa = WebSettings.getDefaultUserAgent(this).replace("; wv", "")
         buildUi()
+        if (savedInstanceState == null && !isPrivate && !isSandbox) showDiscSplash()
         if (isPrivate) wipePrivateData()
         loadBlocklist()
         askNotificationsOnce()
@@ -214,6 +242,67 @@ open class BrowserActivity : Activity() {
         val restored = !isPrivate && !isSandbox && restoreSession()
         if (isWebAddress(data) || !restored) newTab(if (isWebAddress(data)) data else startUrl, false)
         handleWidget(intent)
+    }
+
+    /** "Loading disc": a spinning disc on a blue screen for about a second and a half. Tap to skip. */
+    private fun showDiscSplash() {
+        val splash = FrameLayout(this)
+        splash.background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(0xFF1D4DB8.toInt(), 0xFF0A1F66.toInt(), 0xFF030A24.toInt())
+        )
+        splash.isClickable = true
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        col.gravity = Gravity.CENTER
+        val disc = object : View(this) {
+            private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+            override fun onDraw(c: Canvas) {
+                val cx = width / 2f
+                val cy = height / 2f
+                val r = minOf(width, height) / 2f - 4f
+                p.style = Paint.Style.FILL
+                p.shader = SweepGradient(
+                    cx, cy,
+                    intArrayOf(
+                        0xFFE8EEF8.toInt(), 0xFF8FB4FF.toInt(), 0xFFFFE08A.toInt(),
+                        0xFFB8F5C8.toInt(), 0xFFFF9EC8.toInt(), 0xFFE8EEF8.toInt()
+                    ),
+                    null
+                )
+                c.drawCircle(cx, cy, r, p)
+                p.shader = null
+                p.color = 0x66FFFFFF
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 3f
+                c.drawCircle(cx, cy, r * 0.34f, p)
+                p.style = Paint.Style.FILL
+                p.color = 0xFF0A1330.toInt()
+                c.drawCircle(cx, cy, r * 0.14f, p)
+            }
+        }
+        col.addView(disc, LinearLayout.LayoutParams(dp(130), dp(130)))
+        val name = label("NIROBO", 30f, Color.WHITE)
+        name.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        name.letterSpacing = 0.25f
+        name.setPadding(0, dp(22), 0, 0)
+        col.addView(name)
+        col.addView(label("PLAYER", 13f, Color.parseColor("#B9C9F2")).also { it.letterSpacing = 0.6f })
+        val lcdText = label("LOADING DISC...", 13f, Color.parseColor("#7FF3FF"))
+        lcdText.typeface = android.graphics.Typeface.MONOSPACE
+        lcdText.setPadding(0, dp(26), 0, 0)
+        col.addView(lcdText)
+        splash.addView(col, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        root.addView(splash, FrameLayout.LayoutParams(-1, -1))
+        disc.animate().rotationBy(1080f).setDuration(1700).setInterpolator(LinearInterpolator()).start()
+        var gone = false
+        fun dismiss() {
+            if (gone) return
+            gone = true
+            splash.animate().alpha(0f).setDuration(280).withEndAction { root.removeView(splash) }.start()
+        }
+        splash.setOnClickListener { dismiss() }
+        Handler(Looper.getMainLooper()).postDelayed({ dismiss() }, 1700)
     }
 
     /** Opens the tabs that were open when the app was last left. Only the tab you were on loads right away. */
@@ -378,15 +467,13 @@ open class BrowserActivity : Activity() {
         omniBox = omni
         addr.setSingleLine(true)
         addr.hint = if (isSandbox) "Sandbox: type an address" else if (isPrivate) "Private: search or type address" else "Search or type address"
-        addr.textSize = 15f
-        addr.setTextColor(Color.BLACK)
-        addr.setHintTextColor(Color.GRAY)
+        addr.textSize = 14f
+        addr.setTextColor(lcd)
+        addr.setHintTextColor(lcdDim)
+        addr.typeface = android.graphics.Typeface.MONOSPACE
         addr.imeOptions = EditorInfo.IME_ACTION_GO
         addr.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-        val box = GradientDrawable()
-        box.setColor(Color.WHITE)
-        box.cornerRadius = dp(20).toFloat()
-        addr.background = box
+        addr.background = lcdPanel(6)
         addr.setPadding(dp(14), dp(8), dp(14), dp(8))
         addr.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO) {
@@ -477,29 +564,37 @@ open class BrowserActivity : Activity() {
         if (dvd) bottom.background = glossBar()
         else bottom.setBackgroundColor(Color.parseColor(if (isPrivate) "#EEEAF6" else "#F1F4F2"))
         fun button(symbol: String, action: () -> Unit) {
-            val t = label(symbol, 22f, iconColor)
+            val menu = symbol == "MENU"
+            val cell = FrameLayout(this)
+            val t = label(symbol, if (menu) 11f else if (symbol.length > 1) 12f else 16f, Color.parseColor("#1A2230"))
             t.gravity = Gravity.CENTER
-            t.setOnClickListener { action() }
-            bottom.addView(t, LinearLayout.LayoutParams(0, dp(50), 1f))
+            t.typeface = android.graphics.Typeface.DEFAULT_BOLD
+            t.background = silverKey(!menu)
+            cell.setOnClickListener { action() }
+            cell.setOnTouchListener { _, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) t.alpha = 0.6f
+                else if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) t.alpha = 1f
+                false
+            }
+            cell.addView(t, FrameLayout.LayoutParams(if (menu) dp(54) else dp(38), dp(34), Gravity.CENTER))
+            bottom.addView(cell, LinearLayout.LayoutParams(0, dp(52), 1f))
         }
-        button("\u25C0") { current?.web?.let { if (it.canGoBack()) it.goBack() } }
-        button("\u25B6") { current?.web?.let { if (it.canGoForward()) it.goForward() } }
-        button("\uFF0B") { newTab(startUrl, false) }
-        button("\u2302") { go(startUrl) }
+        button("\u25C0\u25C0") { current?.web?.let { if (it.canGoBack()) it.goBack() } }
+        button("\u25B6\u25B6") { current?.web?.let { if (it.canGoForward()) it.goForward() } }
+        button("\u25B2") { newTab(startUrl, false) }
+        button("\u25A0") { go(startUrl) }
 
-        tabCount = label("1", 12f, iconColor)
+        // chapter counter: the number of open tabs, shown like the display on a DVD player
+        tabCount = label("01", 14f, lcd)
         tabCount.gravity = Gravity.CENTER
-        val frame = GradientDrawable()
-        frame.setColor(Color.TRANSPARENT)
-        frame.setStroke(dp(2), iconColor)
-        frame.cornerRadius = dp(5).toFloat()
-        tabCount.background = frame
+        tabCount.typeface = android.graphics.Typeface.MONOSPACE
+        tabCount.background = lcdPanel(5)
         val tabCell = FrameLayout(this)
         tabCell.setOnClickListener { showSwitcher() }
-        tabCell.addView(tabCount, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
-        bottom.addView(tabCell, LinearLayout.LayoutParams(0, dp(50), 1f))
+        tabCell.addView(tabCount, FrameLayout.LayoutParams(dp(40), dp(30), Gravity.CENTER))
+        bottom.addView(tabCell, LinearLayout.LayoutParams(0, dp(52), 1f))
 
-        button("\u22EE") { showMenu() }
+        button("MENU") { showMenu() }
 
         applyBarPosition()
         root.addView(page, FrameLayout.LayoutParams(match, match))
@@ -1232,11 +1327,11 @@ open class BrowserActivity : Activity() {
             val html: String
             if (isSandbox) {
                 AboutPages.dvd = dvd
-                html = if (name == "blank") AboutPages.build("about:blank", isDark()) else sandboxPage()
+                html = if (name == "blank") AboutPages.build("about:blank", true) else sandboxPage()
             } else {
                 t.web.addJavascriptInterface(bridge, "Bridge")
                 AboutPages.dvd = dvd
-                html = AboutPages.build(shown, isDark())
+                html = AboutPages.build(shown, true)
             }
             // the page name is also the history address, so back/forward and the address bar keep the right name
             t.web.loadDataWithBaseURL(shown, html, "text/html", "utf-8", shown)
@@ -1312,7 +1407,7 @@ open class BrowserActivity : Activity() {
     }
 
     private fun updateTabCount() {
-        tabCount.text = tabs.size.toString()
+        tabCount.text = String.format("%02d", tabs.size)
     }
 
     private fun showSwitcher() {
