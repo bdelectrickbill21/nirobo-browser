@@ -111,6 +111,9 @@ open class BrowserActivity : Activity() {
     /** The sandbox is a private window that is locked down much further (see SandboxActivity). */
     protected open val isSandbox: Boolean get() = false
 
+    /** "" = the normal Personal space, "work" = the Work space (own process, own logins, own tabs). */
+    protected open val space: String get() = ""
+
     private val homeUrl: String get() = store.homeUrl
     private val searchUrl = "https://nirobo.pages.dev/?q="
     private val desktopUa =
@@ -155,7 +158,7 @@ open class BrowserActivity : Activity() {
     private var fileCb: ValueCallback<Array<Uri>>? = null
 
     private val barColor: Int
-        get() = Color.parseColor(if (isSandbox) "#6B1414" else if (isPrivate) "#2A1F4B" else "#0E3B2C")
+        get() = Color.parseColor(if (isSandbox) "#6B1414" else if (isPrivate) "#2A1F4B" else if (space == "work") "#0B3A5B" else "#0E3B2C")
 
     private fun dp(n: Int): Int = (n * resources.displayMetrics.density).toInt()
 
@@ -172,8 +175,8 @@ open class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        store = Store(this)
-        Downloader.init(this)
+        store = Store(this, space)
+        Downloader.init(this, space)
         bridge = Bridge(this, store)
         window.statusBarColor = barColor
         applySecure()
@@ -183,7 +186,7 @@ open class BrowserActivity : Activity() {
         if (isPrivate) wipePrivateData()
         loadBlocklist()
         askNotificationsOnce()
-        if (!isPrivate) {
+        if (!isPrivate && space.isEmpty()) {
             NewsSaver.ensureScheduled(this)
             NewsSaver.saveIfDue(this) { }
         }
@@ -1844,6 +1847,14 @@ open class BrowserActivity : Activity() {
         startActivity(i)
     }
 
+    /** Opens the other space (Personal <-> Work) in its own window. */
+    internal fun openSpace(work: Boolean, url: String?) {
+        val i = Intent(this, if (work) WorkActivity::class.java else MainActivity::class.java)
+        if (url != null) i.data = Uri.parse(url)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(i)
+    }
+
     private fun openSandbox(url: String?) {
         val i = Intent(this, SandboxActivity::class.java)
         if (url != null) i.data = Uri.parse(url)
@@ -2034,6 +2045,10 @@ open class BrowserActivity : Activity() {
         item("\uFF0B", "New tab", "") { newTab(startUrl, false) }
         if (!isPrivate && !isSandbox) item("\u21BA", "Reopen closed tab", "") { reopenClosedTab() }
         if (!isPrivate) item("\uD83D\uDD76", "New private tab", "") { openPrivate(null) }
+        // ONE menu slot for spaces (becomes "Apps & Spaces" in step 3)
+        if (!isPrivate && !isSandbox) item("\uD83D\uDC64", if (space == "work") "Switch to Personal space" else "Switch to Work space", "") {
+            openSpace(space != "work", null)
+        }
         divider()
         if (!isPrivate) {
             item("\u2193", "Downloads", "") { loadInto(t, "about:downloads") }
@@ -2653,6 +2668,22 @@ open class BrowserActivity : Activity() {
 
 /** The normal browser. */
 class MainActivity : BrowserActivity()
+
+/**
+ * The Work space: a second set of logins, cookies, tabs, bookmarks and history, so one phone can hold a
+ * personal and a business Facebook, Gmail, WhatsApp Web and so on. Its own process and its own storage.
+ */
+class WorkActivity : BrowserActivity() {
+    override val space: String get() = "work"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        try {
+            WebView.setDataDirectorySuffix("work")
+        } catch (e: Exception) {
+        }
+        super.onCreate(savedInstanceState)
+    }
+}
 
 /** The private browser: its own window, its own storage, no screenshots, erased when closed. */
 class PrivateActivity : BrowserActivity() {

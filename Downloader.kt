@@ -160,11 +160,11 @@ internal object Downloader {
     // ---------------- start-up ----------------
 
     @Synchronized
-    fun init(c: Context) {
+    fun init(c: Context, space: String = "") {
         if (ctx != null) return
         val app = c.applicationContext
         ctx = app
-        store = Store(app)
+        store = Store(app, space)
         val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(NotificationChannel(CH_LIVE, "Downloads in progress", NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel(CH_DONE, "Finished downloads", NotificationManager.IMPORTANCE_DEFAULT))

@@ -12,10 +12,40 @@ import org.json.JSONObject
  * All of it lives in one SharedPreferences file as JSON, so there is no database
  * to migrate and nothing to leak between the normal and the private browser.
  */
-internal class Store(ctx: Context) {
+internal class Store(ctx: Context, space: String = "") {
 
-    private val p: SharedPreferences =
-        ctx.applicationContext.getSharedPreferences("nirobo_store", Context.MODE_PRIVATE)
+    // a space ("work") gets its own file, because two processes must never write the same file.
+    // On first use it copies the settings (not bookmarks, history, tabs or downloads) from the main file.
+    private val p: SharedPreferences = run {
+        val app = ctx.applicationContext
+        if (space.isEmpty()) {
+            app.getSharedPreferences("nirobo_store", Context.MODE_PRIVATE)
+        } else {
+            val sp = app.getSharedPreferences("nirobo_store_$space", Context.MODE_PRIVATE)
+            if (!sp.getBoolean("seeded", false)) {
+                val skip = setOf(
+                    "bookmarks", "history", "session", "session_i", "closed_tabs", "downloads",
+                    "sitePerms", "sites", "cur_max", "cur_min", "news_saved_at"
+                )
+                val ed = sp.edit()
+                try {
+                    for ((k, v) in app.getSharedPreferences("nirobo_store", Context.MODE_PRIVATE).all) {
+                        if (k in skip) continue
+                        when (v) {
+                            is Boolean -> ed.putBoolean(k, v)
+                            is Int -> ed.putInt(k, v)
+                            is Long -> ed.putLong(k, v)
+                            is Float -> ed.putFloat(k, v)
+                            is String -> ed.putString(k, v)
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+                ed.putBoolean("seeded", true).apply()
+            }
+            sp
+        }
+    }
 
     // ---------------- settings ----------------
 

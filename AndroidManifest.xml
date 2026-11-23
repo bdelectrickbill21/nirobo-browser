@@ -173,6 +173,17 @@
             android:name=".PdfReaderActivity"
             android:exported="false" />
 
+        <!-- the Work space: its own process, so its logins and cookies never mix with Personal -->
+        <activity
+            android:name=".WorkActivity"
+            android:exported="false"
+            android:process=":work"
+            android:taskAffinity="org.nirobo.browser.work"
+            android:launchMode="singleTask"
+            android:label="Nirobo Work"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- the private browser: a separate process, so it has its own storage and is erased when closed -->
         <activity
             android:name=".PrivateActivity"

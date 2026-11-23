@@ -106,3 +106,9 @@ Principles: zero telemetry, no accounts, no extensions (extensions are how email
 - MainActivity: `askSite` dialog (Allow / Only this time / Block; private = no remembering, sandbox = always deny, https only), `handleSitePermission`, `grantSite`, `handleSiteLocation`, `grantLocation`, `onRequestPermissionsResult` (codes 710 cam/mic, 711 location). Manifest: CAMERA, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS, ACCESS_FINE/COARSE_LOCATION + optional uses-feature.
 - Still missing: a manager page to review/reset saved site permissions (call `store.clearSitePerms()` from "Clear browsing data" and add a list on about:settings later); notifications permission per site.
 - NEXT: step 2 Spaces (Personal/Work).
+
+## Nov 23: step 2 DONE (Work space) - UNBUILT
+- `Store(ctx, space)`: space "work" -> own file `nirobo_store_work`, seeded once with settings copied from the main file (not bookmarks/history/session/downloads/perms/sites). `Downloader.init(ctx, space)` same.
+- `open val space` in BrowserActivity; `WorkActivity` (process `:work`, `setDataDirectorySuffix("work")`, bar colour #0B3A5B, manifest entry). `openSpace(work, url)`. ONE menu item: "Switch to Work space" / "Switch to Personal space" (this slot becomes "Apps & Spaces" in step 3 - do not add another).
+- Known limits: DownloadService notification runs in the main process, so Work downloads work but may not show the live notification; Work space does not run the daily news saver; link intents always open in Personal.
+- NEXT: step 3 `about:apps` (tiles open in Personal or Work; replace the menu item label with "Apps & Spaces").
