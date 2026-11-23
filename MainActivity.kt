@@ -206,6 +206,62 @@ open class BrowserActivity : Activity() {
         return g
     }
 
+    /** The dark metal panel used by the menu popup. */
+    private fun metalPanel(radius: Int): GradientDrawable {
+        val c = if (isSandbox) intArrayOf(0xFF3A1414.toInt(), 0xFF1E0808.toInt())
+        else if (isPrivate) intArrayOf(0xFF2E2650.toInt(), 0xFF140F2A.toInt())
+        else intArrayOf(0xFF2A2F38.toInt(), 0xFF12151A.toInt())
+        val g = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, c)
+        g.cornerRadius = dp(radius).toFloat()
+        g.setStroke(dp(1), Color.parseColor("#8A96A8"))
+        return g
+    }
+
+    /** A menu row that glows gold from the left while pressed, like the selector in a DVD menu. */
+    private fun selectorBg(): android.graphics.drawable.StateListDrawable {
+        val s = android.graphics.drawable.StateListDrawable()
+        val gold = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0x66FFD45A, 0x00FFD45A))
+        s.addState(intArrayOf(android.R.attr.state_pressed), gold)
+        s.addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))
+        return s
+    }
+
+    /** A tab row in the scene-selection screen. */
+    private fun chapterBg(selected: Boolean): GradientDrawable {
+        val g = GradientDrawable()
+        g.setColor(if (selected) 0x99285FD0.toInt() else 0x66102A80)
+        g.cornerRadius = dp(10).toFloat()
+        g.setStroke(dp(if (selected) 2 else 1), Color.parseColor(if (selected) "#FFD45A" else "#8FA6D6"))
+        return g
+    }
+
+    // ---------- plain http (only when the person says so) ----------
+    // https is always tried first. If a site has no https (many government and older sites), the error page
+    // offers "Open once" or "Always open this site on http". Router / LAN addresses never need asking.
+
+    private val httpSession = HashSet<String>()
+
+    private fun httpAllowed(host: String): Boolean {
+        val h = host.lowercase()
+        if (h.isEmpty()) return false
+        return isPrivateHost(h) || httpSession.contains(h) || (!isPrivate && !isSandbox && store.httpAllowed(h))
+    }
+
+    private fun allowHttp(host: String, always: Boolean) {
+        val h = host.lowercase()
+        httpSession.add(h)
+        if (always && !isPrivate && !isSandbox) store.addHttpAllowed(h)
+    }
+
+    private fun hasInternet(): Boolean = try {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val n = cm.activeNetwork
+        val c = if (n != null) cm.getNetworkCapabilities(n) else null
+        c != null && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    } catch (e: Exception) {
+        true
+    }
+
     private fun dp(n: Int): Int = (n * resources.displayMetrics.density).toInt()
 
     /** True when the app should draw its own pages dark. */
@@ -526,15 +582,18 @@ open class BrowserActivity : Activity() {
         findBar = LinearLayout(this)
         findBar.orientation = LinearLayout.HORIZONTAL
         findBar.gravity = Gravity.CENTER_VERTICAL
-        findBar.setBackgroundColor(Color.parseColor("#F1F4F2"))
+        findBar.background = glossBar()
         findBar.setPadding(dp(10), dp(6), dp(6), dp(6))
         findBar.visibility = View.GONE
         findInput = EditText(this)
         findInput.setSingleLine(true)
         findInput.hint = "Find in page"
         findInput.textSize = 14f
-        findInput.setTextColor(Color.BLACK)
-        findInput.setHintTextColor(Color.GRAY)
+        findInput.setTextColor(lcd)
+        findInput.setHintTextColor(lcdDim)
+        findInput.typeface = android.graphics.Typeface.MONOSPACE
+        findInput.background = lcdPanel(6)
+        findInput.setPadding(dp(10), dp(6), dp(10), dp(6))
         findInput.imeOptions = EditorInfo.IME_ACTION_SEARCH
         findInput.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
@@ -549,7 +608,7 @@ open class BrowserActivity : Activity() {
         }
         findBar.addView(findInput, LinearLayout.LayoutParams(0, wrap, 1f))
         fun findBtn(t: String, action: () -> Unit) {
-            val v = label(t, 16f, barColor)
+            val v = label(t, 16f, lcd)
             v.setPadding(dp(12), dp(8), dp(12), dp(8))
             v.setOnClickListener { action() }
             findBar.addView(v, LinearLayout.LayoutParams(wrap, wrap))
@@ -601,22 +660,32 @@ open class BrowserActivity : Activity() {
 
         switcher = LinearLayout(this)
         switcher.orientation = LinearLayout.VERTICAL
-        switcher.setBackgroundColor(Color.WHITE)
+        switcher.background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(0xFF1D4DB8.toInt(), 0xFF0A1F66.toInt(), 0xFF030A24.toInt())
+        )
         switcher.isClickable = true
         switcher.visibility = View.GONE
 
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
-        head.setBackgroundColor(barColor)
-        head.setPadding(dp(14), dp(8), dp(6), dp(8))
-        val headTitle = label(if (isSandbox) "Sandbox tabs" else if (isPrivate) "Private tabs" else "Tabs", 18f, Color.WHITE)
+        head.background = glossBar()
+        head.setPadding(dp(14), dp(8), dp(8), dp(8))
+        val headTitle = label(if (isSandbox) "SANDBOX SCENES" else if (isPrivate) "PRIVATE SCENES" else "SCENE SELECTION", 14f, lcd)
+        headTitle.typeface = android.graphics.Typeface.MONOSPACE
+        headTitle.letterSpacing = 0.12f
         head.addView(headTitle, LinearLayout.LayoutParams(0, wrap, 1f))
         fun headButton(text: String, action: () -> Unit) {
-            val t = label(text, 15f, Color.WHITE)
-            t.setPadding(dp(12), dp(10), dp(12), dp(10))
+            val t = label(text, 12f, Color.parseColor("#1A2230"))
+            t.typeface = android.graphics.Typeface.DEFAULT_BOLD
+            t.gravity = Gravity.CENTER
+            t.background = silverKey(false)
+            t.setPadding(dp(11), dp(8), dp(11), dp(8))
             t.setOnClickListener { action() }
-            head.addView(t, LinearLayout.LayoutParams(wrap, wrap))
+            val lp = LinearLayout.LayoutParams(wrap, wrap)
+            lp.leftMargin = dp(6)
+            head.addView(t, lp)
         }
         headButton("\uFF0B New") {
             newTab(startUrl, false)
@@ -711,7 +780,17 @@ open class BrowserActivity : Activity() {
                 val u = request.url
                 val scheme = u.scheme ?: ""
                 if (scheme == "about") {
-                    loadInto(t, u.toString())
+                    val s = u.toString()
+                    if (s.startsWith("about:openhttp")) {
+                        // from the "no https" page: open the plain http version
+                        val target = Uri.decode(s.substringAfter("&u=", ""))
+                        if (target.startsWith("http://")) {
+                            allowHttp(Uri.parse(target).host ?: "", s.contains("always=1"))
+                            view.loadUrl(target)
+                        }
+                        return true
+                    }
+                    loadInto(t, s)
                     return true
                 }
                 if (scheme == "https" || scheme == "http") {
@@ -731,6 +810,7 @@ open class BrowserActivity : Activity() {
                         }
                         return false
                     }
+                    if (httpAllowed(u.host ?: "")) return false
                     view.loadUrl(u.buildUpon().scheme("https").build().toString())
                     return true
                 }
@@ -823,22 +903,46 @@ open class BrowserActivity : Activity() {
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
                     val why = TextUtils.htmlEncode(error.description.toString())
+                    val failed = request.url
+                    val code = error.errorCode
+                    // connect / timeout / io / ssl / unknown on an https address while the internet itself works:
+                    // the site probably has no (working) https
+                    val offerHttp = failed.scheme == "https" &&
+                        code in intArrayOf(-1, -6, -7, -8, -11) && hasInternet() &&
+                        !isPrivateHost(failed.host ?: "")
                     val saved = File(filesDir, "news_saved.json")
                     val hasNews = saved.exists() && saved.length() > 1000
-                    val newsLink = if (hasNews)
-                        "<p style='margin-top:22px'><a href='about:news' " +
-                            "style='display:inline-block;background:#0B5D3B;color:#fff;" +
-                            "padding:12px 20px;border-radius:11px;text-decoration:none;" +
-                            "font-weight:600'>Read the saved news</a></p>" else ""
+                    fun btn(href: String, text: String, gold: Boolean) =
+                        "<p><a href='" + href + "' style='display:block;text-align:center;padding:13px;" +
+                            "border-radius:999px;text-decoration:none;font-weight:700;" +
+                            (if (gold) "background:linear-gradient(#ffe9a3,#ffd45a 50%,#e0a92a);color:#3a2a00;"
+                            else "background:linear-gradient(#f7f9ff,#c3d0ee 48%,#8da2d0 52%,#d3ddf4);color:#0a1f66;") +
+                            "border:1px solid #fff'>" + text + "</a></p>"
+                    var body = ""
+                    if (offerHttp) {
+                        val plain = "http://" + failed.toString().substring(8)
+                        val enc = Uri.encode(plain)
+                        body += "<div style='margin:16px 0;padding:14px;border-radius:12px;" +
+                            "background:rgba(255,212,90,.15);border:1px solid #ffd45a;color:#ffe9a3'>" +
+                            "<b>This site may have no secure (https) version.</b><br>" +
+                            "Some government and older sites still use plain http. Others on the same network " +
+                            "could read what you type there, so do not enter passwords or private data.</div>" +
+                            btn("about:openhttp?always=0&u=$enc", "Open once on http", true) +
+                            btn("about:openhttp?always=1&u=$enc", "Always open this site on http", false)
+                    }
+                    body += btn(TextUtils.htmlEncode(failed.toString()), "Try again (https)", false)
+                    if (hasNews) body += btn("about:news", "Read the saved news", false)
                     val html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>" +
-                        "</head><body style='font-family:sans-serif;padding:24px;color:#0E3B2C;" +
-                        "background:#F6FAF7;line-height:1.6'>" +
-                        "<h2 style='margin:0 0 8px'>Can't open this page</h2>" +
-                        "<p style='color:#5C7A6C'>$why</p>" +
-                        "<p style='color:#5C7A6C'>Check your internet connection. " +
-                        "Nirobo Browser opens only secure (https) pages.</p>" +
-                        newsLink +
-                        "</body></html>"
+                        "</head><body style='font-family:Trebuchet MS,sans-serif;padding:24px;color:#fff;" +
+                        "background:radial-gradient(ellipse at 50% -10%,#2a66e0,#0e2d8f 40%,#030a24) fixed;" +
+                        "line-height:1.55'>" +
+                        "<h2 style='margin:0 0 8px;letter-spacing:3px;text-transform:uppercase'>" +
+                        (if (offerHttp) "No secure version" else "No disc") + "</h2>" +
+                        "<p style='color:#b9c9f2;word-break:break-word'>" + TextUtils.htmlEncode(failed.host ?: "") +
+                        " - " + why + "</p>" +
+                        (if (offerHttp) "" else "<p style='color:#b9c9f2'>Check your internet connection. " +
+                            "Nirobo opens secure (https) pages first.</p>") +
+                        body + "</body></html>"
                     view.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
                 }
             }
@@ -1428,31 +1532,36 @@ open class BrowserActivity : Activity() {
             val note = label(
                 if (isSandbox) "Sandbox: scripts, cookies, storage and downloads are blocked. Everything is erased when you close it."
                 else "Nothing is saved here. Everything is erased when you close these tabs.",
-                13f, Color.GRAY
+                13f, Color.parseColor("#B9C9F2")
             )
             note.setPadding(dp(14), dp(10), dp(14), dp(10))
             switcherList.addView(note, LinearLayout.LayoutParams(match, wrap))
         }
-        for (t in tabs) {
+        for ((i, t) in tabs.withIndex()) {
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
-            row.setPadding(dp(14), dp(10), dp(6), dp(10))
-            row.setBackgroundColor(if (t === current) Color.parseColor("#E3F1EA") else Color.WHITE)
+            row.setPadding(dp(12), dp(10), dp(6), dp(10))
+            row.background = chapterBg(t === current)
+
+            val num = label(String.format("%02d", i + 1), 16f, lcd)
+            num.typeface = android.graphics.Typeface.MONOSPACE
+            num.setPadding(0, 0, dp(12), 0)
+            row.addView(num)
 
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
-            val title = label(if (t.title.isEmpty()) "New tab" else t.title, 15f, Color.BLACK)
+            val title = label((if (t === current) "\u25B6 " else "") + (if (t.title.isEmpty()) "New tab" else t.title), 15f, Color.WHITE)
             title.setSingleLine(true)
             title.ellipsize = TextUtils.TruncateAt.END
-            val url = label(t.url, 12f, Color.GRAY)
+            val url = label(t.url, 12f, Color.parseColor("#B9C9F2"))
             url.setSingleLine(true)
             url.ellipsize = TextUtils.TruncateAt.END
             col.addView(title)
             col.addView(url)
             row.addView(col, LinearLayout.LayoutParams(0, wrap, 1f))
 
-            val x = label("\u2715", 20f, Color.DKGRAY)
+            val x = label("\u2715", 20f, Color.parseColor("#DDE8FF"))
             x.setPadding(dp(14), dp(8), dp(14), dp(8))
             x.setOnClickListener { closeTab(t) }
             row.addView(x, LinearLayout.LayoutParams(wrap, wrap))
@@ -1461,7 +1570,9 @@ open class BrowserActivity : Activity() {
                 switchTo(t)
                 hideSwitcher()
             }
-            switcherList.addView(row, LinearLayout.LayoutParams(match, wrap))
+            val rlp = LinearLayout.LayoutParams(match, wrap)
+            rlp.setMargins(dp(10), dp(5), dp(10), dp(5))
+            switcherList.addView(row, rlp)
         }
     }
 
@@ -1631,6 +1742,9 @@ open class BrowserActivity : Activity() {
         val message = when {
             t.isAbout -> "This page is inside Nirobo Browser. It never leaves your phone."
             t.url.startsWith("https://") -> "The connection is secure (https).\n\nBlocked on this page: ${t.blocked}"
+            t.url.startsWith("http://") ->
+                "NOT secure (http).\n\nOthers on the network can read what you send to this site. " +
+                    "Do not type passwords or private data here.\n\nBlocked on this page: ${t.blocked}"
             else -> t.url
         }
         val b = AlertDialog.Builder(this)
@@ -1999,7 +2113,9 @@ open class BrowserActivity : Activity() {
         if (AboutPages.isAbout(t)) return t
         return when {
             t.startsWith("https://") -> t
-            t.startsWith("http://") -> "https://" + t.substring(7)
+            t.startsWith("http://") ->
+                if (httpAllowed(Uri.parse(t).host ?: "")) t else "https://" + t.substring(7)
+            !t.contains(" ") && isPrivateHost(t.substringBefore('/').substringBefore(':')) -> "http://$t"
             t.contains(" ") || !t.contains(".") -> searchLink(t)
             else -> "https://$t"
         }
@@ -2089,22 +2205,22 @@ open class BrowserActivity : Activity() {
     private fun showMenu() {
         val t = current ?: return
         menuPopup?.dismiss()
-        val dark = isDark()
-        val ink = Color.parseColor(if (dark) "#E8EAED" else "#202124")
-        val soft = Color.parseColor(if (dark) "#9AA0A6" else "#5F6368")
-        val line = Color.parseColor(if (dark) "#3C4043" else "#E3E6E8")
+        val ink = Color.parseColor("#EAF1FF")
+        val soft = lcd
+        val line = Color.parseColor("#56606F")
         val match = ViewGroup.LayoutParams.MATCH_PARENT
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val ref = arrayOfNulls<PopupWindow>(1)
 
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        val bg = GradientDrawable()
-        bg.setColor(Color.parseColor(if (dark) "#2B2D31" else "#FFFFFF"))
-        bg.cornerRadius = dp(18).toFloat()
-        bg.setStroke(dp(1), line)
-        box.background = bg
+        box.background = metalPanel(12)
         box.setPadding(0, dp(6), 0, dp(6))
+        val menuTitle = label("\u25B6  MAIN MENU", 12f, lcd)
+        menuTitle.typeface = android.graphics.Typeface.MONOSPACE
+        menuTitle.letterSpacing = 0.2f
+        menuTitle.setPadding(dp(18), dp(8), dp(18), dp(6))
+        box.addView(menuTitle)
 
         fun divider() {
             val v = View(this)
@@ -2119,6 +2235,7 @@ open class BrowserActivity : Activity() {
             row.orientation = LinearLayout.HORIZONTAL
             row.gravity = Gravity.CENTER_VERTICAL
             row.setPadding(dp(18), 0, dp(18), 0)
+            row.background = selectorBg()
             val gl = label(glyph, 18f, soft)
             gl.gravity = Gravity.CENTER
             row.addView(gl, LinearLayout.LayoutParams(dp(30), dp(48)))
@@ -2126,7 +2243,7 @@ open class BrowserActivity : Activity() {
             nm.setPadding(dp(14), 0, 0, 0)
             row.addView(nm, LinearLayout.LayoutParams(0, wrap, 1f))
             if (trailing.isNotEmpty()) {
-                row.addView(label(trailing, 18f, Color.parseColor("#1A73E8")), LinearLayout.LayoutParams(wrap, wrap))
+                row.addView(label(trailing, 18f, Color.parseColor("#FFD45A")), LinearLayout.LayoutParams(wrap, wrap))
             }
             row.setOnClickListener {
                 ref[0]?.dismiss()
@@ -2140,14 +2257,17 @@ open class BrowserActivity : Activity() {
         icons.orientation = LinearLayout.HORIZONTAL
         icons.setPadding(dp(8), dp(2), dp(8), dp(2))
         fun icon(symbol: String, action: () -> Unit) {
-            val v = label(symbol, 22f, ink)
+            val cell = FrameLayout(this)
+            val v = label(symbol, 17f, Color.parseColor("#1A2230"))
             v.gravity = Gravity.CENTER
-            v.setPadding(0, dp(10), 0, dp(10))
-            v.setOnClickListener {
+            v.typeface = android.graphics.Typeface.DEFAULT_BOLD
+            v.background = silverKey(true)
+            cell.setOnClickListener {
                 ref[0]?.dismiss()
                 action()
             }
-            icons.addView(v, LinearLayout.LayoutParams(0, wrap, 1f))
+            cell.addView(v, FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER))
+            icons.addView(cell, LinearLayout.LayoutParams(0, dp(48), 1f))
         }
         icon("\u25B6") { if (t.web.canGoForward()) t.web.goForward() }
         if (!isPrivate) {
@@ -2441,6 +2561,9 @@ open class BrowserActivity : Activity() {
         WebStorage.getInstance().deleteAllData()
         store.clearHistory()
         store.clearClosed()
+        store.clearHttpAllowed()
+        store.clearSitePerms()
+        httpSession.clear()
         toast("Cleared")
     }
 

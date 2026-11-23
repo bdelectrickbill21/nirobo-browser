@@ -25,7 +25,7 @@ internal class Store(ctx: Context, space: String = "") {
             if (!sp.getBoolean("seeded", false)) {
                 val skip = setOf(
                     "bookmarks", "history", "session", "session_i", "closed_tabs", "downloads",
-                    "sitePerms", "sites", "cur_max", "cur_min", "news_saved_at"
+                    "sitePerms", "httpHosts", "sites", "cur_max", "cur_min", "news_saved_at"
                 )
                 val ed = sp.edit()
                 try {
@@ -194,6 +194,29 @@ internal class Store(ctx: Context, space: String = "") {
         } catch (e: Exception) {
         }
         p.edit().putString("sitePerms", m.toString()).apply()
+    }
+
+    /** Sites the person chose to open on plain http (government and older sites without https). */
+    fun httpAllowed(host: String): Boolean = try {
+        val a = JSONArray(p.getString("httpHosts", "[]") ?: "[]")
+        (0 until a.length()).any { a.optString(it) == host }
+    } catch (e: Exception) {
+        false
+    }
+
+    fun addHttpAllowed(host: String) {
+        if (host.isEmpty() || httpAllowed(host)) return
+        val a = try {
+            JSONArray(p.getString("httpHosts", "[]") ?: "[]")
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        a.put(host)
+        p.edit().putString("httpHosts", a.toString()).apply()
+    }
+
+    fun clearHttpAllowed() {
+        p.edit().remove("httpHosts").apply()
     }
 
     fun clearSitePerms() {
